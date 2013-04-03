@@ -5,6 +5,11 @@ class RequiredException(Exception):
     """
     Raised when class needs more parameters to deserialize (msg=param_name)
     """
+    
+class DoNotSerialize(Exception):
+    """
+    Raised when field isn't required to be serialized. Raised by '_to_json_struct' methods
+    """
 
 class MetaSerializable(type):
     TO_SUFFIX =   '_to_json_struct'
@@ -45,7 +50,12 @@ class Serializable(object):
             serializer_field = functions.get(self.__metaclass__.TO_SUFFIX)
             if serializer_field:
                 serializer = getattr(self, serializer_field)
-                obj[field] = serializer()
+                try:
+                    value = serializer()
+                except DoNotSerialize:
+                    continue
+                else:
+                    obj[field] = value
             else:
                 obj[field] = getattr(self, field)
         return obj
@@ -59,6 +69,7 @@ class Serializable(object):
             result = cls()
         fields_values = {}
         iterated = True
+        new_kwargs = dict(kwargs)
         while iterated:
             iterated = False
             for field, functions in fields_dct.iteritems():
@@ -70,8 +81,9 @@ class Serializable(object):
                 # If there is a function to deserialize value, call it, otherwise just assign the value. 
                 if deserializer_field:
                     deserializer = getattr(cls, deserializer_field)
+                    new_kwargs.update(fields_values=fields_values)
                     try:
-                        field_value = deserializer(obj_field_value, fields_values=fields_values, **kwargs)
+                        field_value = deserializer(obj_field_value, constructed_obj=result, **new_kwargs)
                     except RequiredException:
                         continue
                 else:

@@ -8,9 +8,9 @@ def _reverse_index(lst):
 
 def get_ts_invariants(petri_net, places=None, transitions=None):
     if not places:
-        places = _reverse_index(petri_net.get_places())
+        places = _reverse_index(petri_net.get_sorted_places())
     if not transitions:
-        transitions = _reverse_index(petri_net.get_transitions())
+        transitions = _reverse_index(petri_net.get_sorted_transitions())
     A = np.zeros((len(places), len(transitions)))
     for transition,col in transitions.iteritems():
         for place,weight in transition.input_arcs.iteritems():
@@ -25,9 +25,9 @@ def get_ts_invariants(petri_net, places=None, transitions=None):
 
 def get_deadlocks_traps(petri_net, places=None, transitions=None):
     if not places:
-        places = _reverse_index(petri_net.get_places())
+        places = _reverse_index(petri_net.get_sorted_places())
     if not transitions:
-        transitions = _reverse_index(petri_net.get_transitions())
+        transitions = _reverse_index(petri_net.get_sorted_transitions())
     cols = len(places)
     dl_rows = 0
     tr_rows = 0
@@ -124,8 +124,8 @@ if __name__=='__main__':
     p1 -> t3 -> p4
     p3 p4 -> t4 -> p2
     """)
-    places = net1.get_places()
-    transitions = net1.get_transitions()
+    places = net1.get_sorted_places()
+    transitions = net1.get_sorted_transitions()
     
     def format(p):
         return json.dumps(p.to_json_struct(),indent=2, sort_keys=True)
