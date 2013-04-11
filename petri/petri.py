@@ -31,7 +31,6 @@ class Arc(Serializable):
         elif self.weight<0:
             self.place.add_tokens(abs_weight)
     
-    @classmethod
     def place_from_json_struct(self, place_obj, places_dct, **kwargs):
         return places_dct[place_obj]
     
@@ -99,22 +98,19 @@ class Transition(Serializable):
     def output_arcs_to_json_struct(self):
         return [arc.to_json_struct() for arc in self.output_arcs]
     
-    @classmethod 
-    def input_arcs_from_json_struct(cls, input_arcs_obj, places_dct, constructed_obj, **kwargs):
+    def input_arcs_from_json_struct(self, input_arcs_obj, places_dct, **kwargs):
         input_arcs = []
         for obj in input_arcs_obj:
-            constructor_args = dict(net=constructed_obj.net, transition=constructed_obj)
-            arc = cls.ARC_CLS.from_json_struct(obj, constructor_args, places_dct=places_dct, **kwargs)
+            constructor_args = dict(net=self.net, transition=self)
+            arc = self.ARC_CLS.from_json_struct(obj, constructor_args, places_dct=places_dct, **kwargs)
             input_arcs.append(arc)
         return set(input_arcs)
     
-    @classmethod 
-    def output_arcs_from_json_struct(cls, output_arcs_obj, places_dct, constructed_obj, **kwargs):
+    def output_arcs_from_json_struct(self, output_arcs_obj, places_dct, **kwargs):
         output_arcs = []
-        print kwargs
         for obj in output_arcs_obj:
-            constructor_args = dict(net=constructed_obj.net, transition=constructed_obj)
-            arc = cls.ARC_CLS.from_json_struct(obj, constructor_args, places_dct=places_dct, **kwargs)
+            constructor_args = dict(net=self.net, transition=self)
+            arc = self.ARC_CLS.from_json_struct(obj, constructor_args, places_dct=places_dct, **kwargs)
             output_arcs.append(arc)
         return set(output_arcs)
         
@@ -161,9 +157,8 @@ class PetriNet(Serializable):
         self.cached_sorted_places = None
         self.cached_sorted_transitions = None
         
+        
     def add_place(self, place):
-        print place.unique_id
-        print self.places
         assert(place.unique_id not in self.places)
         self.places[place.unique_id] = place
         self.on_places_changed()
@@ -248,24 +243,23 @@ class PetriNet(Serializable):
     def places_to_json_struct(self):
         return [place.to_json_struct() for place in self.places.itervalues()]
     
-    @classmethod
-    def places_from_json_struct(cls, places_obj, constructed_obj, **kwargs):
+    def places_from_json_struct(self, places_obj, **kwargs):
         places = {}
         for place_obj in places_obj:
-            constructor_args = dict(net=constructed_obj)
-            place_obj = cls.PLACE_CLS.from_json_struct(place_obj, constructor_args=constructor_args)
+            constructor_args = dict(net=self)
+            place_obj = self.PLACE_CLS.from_json_struct(place_obj, constructor_args=constructor_args)
             places[place_obj.unique_id] = place_obj
+        self.places_deserialized = True
         return places
     
-    @classmethod
-    def transitions_from_json_struct(cls, transitions_obj, fields_values, constructed_obj, **kwargs):
-        places = fields_values.get('places')
-        if places is None:
+    def transitions_from_json_struct(self, transitions_obj, **kwargs):
+        if not getattr(self, 'places_deserialized', False):
             raise RequiredException('places')
+        del self.places_deserialized
         transitions = {}
         for transition_obj in transitions_obj:
-            constructor_args = dict(net=constructed_obj)
-            transition_obj = cls.TRANSITION_CLS.from_json_struct(transition_obj, places_dct=places, constructor_args=constructor_args)
+            constructor_args = dict(net=self)
+            transition_obj = self.TRANSITION_CLS.from_json_struct(transition_obj, places_dct=self.places, constructor_args=constructor_args)
             transitions[transition_obj.unique_id] = transition_obj
         return transitions
     
@@ -291,8 +285,6 @@ class PetriNet(Serializable):
                         name = place
                     tokens = int(tokens)
                     if name not in net.places:
-                        print net.places
-                        print name,tokens
                         net.new_place(net=net, unique_id=name, tokens=tokens)
             c = line.count('->')
             if c not in (1,2):

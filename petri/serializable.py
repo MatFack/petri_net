@@ -69,7 +69,6 @@ class Serializable(object):
             result = cls()
         fields_values = {}
         iterated = True
-        new_kwargs = dict(kwargs)
         while iterated:
             iterated = False
             for field, functions in fields_dct.iteritems():
@@ -80,10 +79,9 @@ class Serializable(object):
                 deserializer_field = functions.get(cls.__metaclass__.FROM_SUFFIX)
                 # If there is a function to deserialize value, call it, otherwise just assign the value. 
                 if deserializer_field:
-                    deserializer = getattr(cls, deserializer_field)
-                    new_kwargs.update(fields_values=fields_values)
+                    deserializer = getattr(result, deserializer_field)
                     try:
-                        field_value = deserializer(obj_field_value, constructed_obj=result, **new_kwargs)
+                        field_value = deserializer(obj_field_value, **kwargs)
                     except RequiredException:
                         continue
                 else:
@@ -101,8 +99,7 @@ class Trans(Serializable):
     def x_to_json_struct(self):
         return 1
     
-    @classmethod
-    def x_from_json_struct(cls, obj, **kwargs):
+    def x_from_json_struct(self, obj, **kwargs):
         return [obj]
 
 

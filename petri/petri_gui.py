@@ -11,7 +11,7 @@ import json
 import collections
 import wx.lib.buttons as buttons
 from petrigui.dialog_fields import DialogFields, place_ranged 
-
+import serializable
 
 
 
@@ -126,8 +126,8 @@ class PositionMixin(object):
         super(PositionMixin, self).__init__(*args, **kwargs)
         
     def set_position(self, x, y):
-        self.pos_x = x
-        self.pos_y = y
+        self.pos_x = x # - (x%7)
+        self.pos_y = y # - (y%7) # lol grid
         
     def get_position(self):
         return self.pos_x, self.pos_y
@@ -136,8 +136,9 @@ class PositionMixin(object):
         self.memo_x, self.memo_y = self.pos_x, self.pos_y
         
     def move_diff(self, diff_x, diff_y):
-        self.pos_x = self.memo_x + diff_x
-        self.pos_y = self.memo_y + diff_y
+        new_x = self.memo_x + diff_x
+        new_y = self.memo_y + diff_y
+        self.set_position(new_x, new_y)
         
 class SelectionMixin(object):
     def __init__(self, *args, **kwargs):
@@ -159,11 +160,48 @@ class SelectionMixin(object):
         self.selected = selected
         
 
+class ObjectLabel(SelectionMixin, serializable.Serializable):
+    diff_x_to_serialize = True
+    diff_y_to_serialize = True
+    
+    def __init__(self, obj, x=0, y=0):
+        self.obj = obj
+        self.diff_x = x
+        self.diff_y = y
+        self.rectangle = None
         
+    def draw(self, dc):
+        text = str(self.obj.unique_id)
+        obj_x, obj_y = self.obj.get_position()
+        self.draw_text(dc, text, obj_x + self.diff_x, obj_y + self.diff_y)
+        
+    def draw_text(self, dc, text, left_x, top_y):
+        tw, th = dc.GetTextExtent(text)
+        x1, y1 = left_x-tw, top_y-th
+        x2, y2 = x1 + tw, y1 + th
+        self.rectangle = (x1, y1, x2, y2)
+        dc.DrawText(text,  x1, y1)
+        
+    def contains_point(self, x, y):
+        x1, y1, x2, y2 = self.rectangle
+        return x1 <= x <= x2 and y1 <= y <= y2
+    
+    def prepare_to_move(self):
+        self.memo_diff_x = self.diff_x
+        self.memo_diff_y = self.diff_y
+    
+    def in_rect(self, lx, ly, tx, ty):
+        pass
+    
+    def move_diff(self, diff_x, diff_y):
+        self.diff_x = self.memo_diff_x + diff_x
+        self.diff_y = self.memo_diff_y + diff_y
 
 class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
     pos_x_to_serialize = True
     pos_y_to_serialize = True
+    radius_to_serialize = True
+    
     def __init__(self, net, unique_id=None, tokens=0, position=None):
         """
         unique_id - unique identifier (hash if None)
@@ -171,6 +209,13 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         """
         super(GUIPlace, self).__init__(net=net, unique_id=unique_id, tokens=tokens)
         self.radius = 14
+        self.label = ObjectLabel(self, -self.radius, -self.radius)
+           
+    def label_to_json_struct(self):
+        return self.label.to_json_struct()
+    
+    def label_from_json_struct(self, label_obj, **kwargs):
+        return ObjectLabel.from_json_struct(label_obj, constructor_args=dict(obj=self), **kwargs)
            
     def draw(self, dc):
         if self.is_selected:
@@ -182,9 +227,7 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         if self.tokens>4:
             draw_text(dc, str(self.tokens), self.pos_x, self.pos_y)
         elif self.tokens>0:
-            self.draw_tokens(dc)
-        draw_unique_id(dc, self.unique_id, self.pos_x-self.radius, self.pos_y-self.radius)
-        
+            self.draw_tokens(dc)        
     def draw_tokens(self, dc):
         #This sucks, but who cares
         dc.SetBrush(wx.BLACK_BRUSH)
@@ -249,7 +292,7 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         self.net.rename_place(from_name=self.unique_id, to_name=value)
         
 class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a stub
-    def __init__(self, net, place=None, transition=None, weight=0):
+    def __init__(self, net, place=None, transition=None, weight=1):
         super(GUIArc, self).__init__(net=net, place=place, transition=transition, weight=weight)
         self.tail_length = 10
         self.tail_angle = 15
@@ -257,14 +300,22 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         self.line_pen = wx.Pen(wx.BLACK, line_width)
         self.line_selected_pen = wx.Pen("Blue", line_width)
         self.begin = self.end = None
-        self.points = [ArcPoint(self), ArcPoint(self)]
-        import random
-        self.points[0].set_position(random.randrange(10,380),random.randrange(10,380))
-        #self.points = []
+        self.points = []
         self.points_selected = 0
         
+    def points_to_json_struct(self):
+        return [point.get_position() for point in self.points]
+    
+    def points_from_json_struct(self, points_obj, **kwargs):
+        points = []
+        for point in points_obj:
+            arc_point = ArcPoint(self)
+            arc_point.set_position(*point)
+            points.append(arc_point)
+        return points
+        
     def select_line_pen(self, dc):
-        if self.selected:
+        if self.is_selected:
             dc.SetPen(self.line_selected_pen)
         else:
             dc.SetPen(self.line_pen)
@@ -284,15 +335,37 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
             fr_begin = fr
         fr_begin = vec2d.Vec2d(fr_begin)
         self.draw_arrow(dc, fr_begin, to_end)
-        abs_weight = abs(self.weight)
-        if abs_weight>1:
-            label_x = (fr_begin[0]+to_end[0]) / 2
-            label_y = (fr_begin[1]+to_end[1]) / 2
-            label = str(abs_weight)
-            tw,th = dc.GetTextExtent(label)
-            label_vec = to_end - fr_begin
-            label_vec_perp = label_vec.perpendicular_normal()*max(th,tw)*0.5
-            draw_text(dc, label, label_x+label_vec_perp[0], label_y+label_vec_perp[1])
+        if abs(self.weight)>1:
+            self.draw_label(dc)
+            
+    def draw_label(self, dc):
+        point, direction = self.get_center()
+        label = str(abs(self.weight))
+        label_x = point[0]
+        label_y = point[1]
+        tw,th = dc.GetTextExtent(label)
+        label_vec_perp = direction.perpendicular_normal()*max(th,tw)*0.8
+        draw_text(dc, label, label_x+label_vec_perp[0], label_y+label_vec_perp[1])
+        
+    def get_center(self):
+        length = 0.
+        for a,b in self._iter_segments():
+            a, b = vec2d.Vec2d(a), vec2d.Vec2d(b)
+            length += a.get_distance(b)
+        new_length = 0
+        half_length = length / 2.
+        for a,b in self._iter_segments():
+            a, b = vec2d.Vec2d(a), vec2d.Vec2d(b)
+            dist = a.get_distance(b)
+            new_length += dist
+            if new_length > half_length:
+                redundancy = new_length - half_length
+                dist_proportion = (dist - redundancy) / dist
+                resulting_vec = b - a
+                return a + resulting_vec*dist_proportion, resulting_vec
+                
+                
+                
             
     def draw_segment(self, dc, fr, to):
         x1, y1 = fr[0], fr[1]
@@ -320,15 +393,21 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         return next_obj.get_position()
         
     def contains_point(self, x, y):
+        segment = self.get_segment_nearest_to_point(x, y, self.line_pen.GetWidth())
+        return segment is not None
+    
+    def get_segment_nearest_to_point(self, x, y, maximum_distnace):
+        """ Returns  (a,b) tuple, where a and b are points """
         if self.begin is None or self.end is None:
-            return False
+            return None
         for fr, to in self._iter_segments():
             x1, y1 = fr[0], fr[1]
             x2, y2 = to[0], to[1]
             distance = vec2d.dist(x1, y1, x2, y2, x, y)
-            if distance <= self.line_pen.GetWidth():
-                return True
-        return False
+            if distance <= maximum_distnace:
+                return (fr, to)
+        return None
+    
     
     def _iter_points(self, include_first=True):
         """ Returns object that provide a[0] a[1], this generator returns vectors and tuples."""
@@ -337,14 +416,32 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         for point in self.points:
             yield point.get_position()
         yield self.end
-        
+         
     def _iter_segments(self):
         for a,b in itertools.izip(self._iter_points(), self._iter_points(include_first=False)):
-            yield a,b
-                
+            yield a,b   
     
     def in_rect(self, lx, ly, tx, ty):
-        pass
+        for a,b in self._iter_segments():
+
+            x1,y1 = a[0],a[1]
+            x2,y2 = b[0],b[1]
+            if vec2d.rectangle_intersects_line((x1,y1), (x2, y2), (lx, ly, tx, ty)):
+                return True
+        return False
+    
+    def open_properties_dialog(self, parent):
+        fields = [ 
+                   ('weight', place_ranged('Weight', minimum=1))
+                   ]
+        dia = ElementPropertiesDialog(parent, -1, 'Arc properties', obj=self, fields=fields)
+        dia.ShowModal()
+        dia.Destroy()      
+
+    def update_weight(self, value):
+        if self.weight < 0:
+            value = -value
+        self.weight = value
 
             
         
@@ -411,6 +508,14 @@ class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
         self.side_slots = []
         self.main_angle = 90
         self.directions = [(1, 0), (0, 1), (-1, 0), (0, -1), ]
+        self.label = ObjectLabel(self, 0, -10)
+        
+    def label_to_json_struct(self):
+        return self.label.to_json_struct()
+    
+    def label_from_json_struct(self, label_obj, **kwargs):
+        return ObjectLabel.from_json_struct(label_obj, constructor_args=dict(obj=self), **kwargs)
+
         
     def __set_width(self, width):
         self._width = width
@@ -609,21 +714,29 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         super(MoveAndSelectStrategy, self).__init__(panel=panel)
         self.selection = set()
         self.choosing_rect_left = None
+        self.choosing_rect_right = None
         self.to_select = None
         self.object_moved = False
         self.dragging = False
         self.obj_under_mouse = None
+        self.label_moved = None
         
     def on_left_down(self, event):
         super(MoveAndSelectStrategy, self).on_left_down(event)
         obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+        if isinstance(obj, ObjectLabel):
+            self.label_moved = obj
+            self.start_dragging()
+            self.panel.Refresh()
+            return
         if not (event.ControlDown() or event.AltDown()):
             if obj not in self.selection:
                 self.discard_selection()
         self.obj_under_mouse = obj
         if obj is None:
             self.choosing_rect_left = self.mouse_x, self.mouse_y
-            self.update_selected(event.AltDown())
+            self.choosing_rect_right = None
+            #self.update_selected(event.AltDown())
             self.panel.Refresh()
             return
         if event.AltDown():
@@ -652,10 +765,13 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             obj.set_selected(False)
         self.selection.difference_update(objects)
         
-    def move_selection(self):
+    def move_selection(self, object_to_move=None):
         diff_x, diff_y = self.mouse_x - self.drag_mouse_x, self.mouse_y - self.drag_mouse_y
-        for obj in self.selection:
-            obj.move_diff(diff_x, diff_y)
+        if object_to_move is None:
+            for obj in self.selection:
+                obj.move_diff(diff_x, diff_y)
+        else:
+            object_to_move.move_diff(diff_x, diff_y)
             
     def on_switched(self):
         self.discard_selection()
@@ -669,8 +785,11 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         if self.choosing_rect_left is not None:
             self.update_selected(event.AltDown())
             self.panel.Refresh()
-        elif self.left_down and self.selection is not None:
-            self.move_selection()
+        elif self.left_down:
+            if self.label_moved is not None:
+                self.move_selection(object_to_move=self.label_moved)
+            elif self.selection is not None:
+                self.move_selection()
             self.panel.Refresh()
 
             
@@ -701,7 +820,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             return lx, ly, tx, ty
         
     def draw(self, dc):
-        if self.choosing_rect_left:
+        if self.choosing_rect_left and self.choosing_rect_right:
             lx, ly, tx, ty = self.points_to_rect(self.choosing_rect_left, self.choosing_rect_right)
             dc.SetBrush(wx.TRANSPARENT_BRUSH)
             dc.SetPen(wx.BLACK_PEN)
@@ -710,7 +829,9 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             
     def on_left_up(self, event):
         super(MoveAndSelectStrategy, self).on_left_up(event)
-        if self.choosing_rect_left is not None:
+        if self.label_moved is not None:
+            self.label_moved = None
+        elif self.choosing_rect_left is not None and self.choosing_rect_right:
             selected = self.update_selected(event.AltDown(), return_selection=True)
             if event.AltDown():
                 self.remove_from_selection(*selected)
@@ -718,18 +839,22 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
                 self.add_to_selection(*selected)
             self.choosing_rect_left = None
             self.panel.Refresh()
-        if not self.object_moved and self.obj_under_mouse in self.selection:
+        elif not self.object_moved and self.obj_under_mouse in self.selection:
             if not event.ControlDown():
                 self.discard_selection()
             self.add_to_selection(self.obj_under_mouse)
             self.panel.Refresh()
         if self.dragging:
             self.stop_dragging()
+        self.panel.save_to_file('net.json', self.panel.petri)
               
     def start_dragging(self):
         self.drag_mouse_x, self.drag_mouse_y = self.mouse_x, self.mouse_y
-        for obj in self.selection:
-            obj.prepare_to_move()
+        if self.label_moved is not None:
+            self.label_moved.prepare_to_move()
+        else:
+            for obj in self.selection:
+                obj.prepare_to_move()
         self.dragging = True
         self.object_moved = False
         
@@ -774,6 +899,10 @@ class PetriPanel(wx.Panel):
                 p1 -> t3 -> p4
                 p3 p4 -> t4 -> p2
             """)
+            self.petri = GUIPetriNet.from_string("""
+                # p1::1
+                p1 -> t2 ->
+            """)
             
             
         #self.strategy = MoveAndSelectStrategy(self)
@@ -784,10 +913,12 @@ class PetriPanel(wx.Panel):
     def strategy(self):
         return self.GetParent().strategy
         
-    def GetObjectsInRect(self, lx, ly, tx, ty):
+    def GetObjectsInRect(self, lx, ly, tx, ty): #ignore labels
         if not self.petri:
             return
         for obj in self.get_objects_iter():
+            if isinstance(obj, ObjectLabel):
+                continue
             obj.unselect_temporary()
             if obj.in_rect(lx, ly, tx, ty):
                 yield obj
@@ -801,7 +932,7 @@ class PetriPanel(wx.Panel):
         net = GUIPetriNet.from_json_struct(json_struct)
         return net
         
-    def save_to_filepath(self, filepath, net):
+    def save_to_file(self, filepath, net):
         json_struct = net.to_json_struct()
         with open(filepath, 'wb') as f:
             json.dump(json_struct, f)
@@ -860,8 +991,10 @@ class PetriPanel(wx.Panel):
     def get_objects_iter(self):
         for place in self.petri.get_places_iter():
             yield place
+            yield place.label
         for transition in self.petri.get_transitions_iter():
             yield transition
+            yield transition.label
         for transition in self.petri.get_transitions_iter():   
             for arc in transition.get_arcs():
                 yield arc
@@ -875,8 +1008,10 @@ class PetriPanel(wx.Panel):
                     yield point
                 yield arc
         for transition in reversed(self.petri.get_transitions()):
+            yield transition.label
             yield transition
         for place in reversed(self.petri.get_places()):
+            yield place.label
             yield place
         
     def draw(self, dc, w, h):

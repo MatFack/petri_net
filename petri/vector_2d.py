@@ -10,6 +10,9 @@ def dist(x1,y1, x2,y2, x3,y3): # x3,y3 is the point
     py = y2-y1
 
     something = px*px + py*py
+    
+    if something == 0:
+        return (x3-x1)**2 + (y3-y1)**2
 
     u =  ((x3 - x1) * px + (y3 - y1) * py) / float(something)
 
@@ -33,6 +36,30 @@ def dist(x1,y1, x2,y2, x3,y3): # x3,y3 is the point
     dist = math.sqrt(dx*dx + dy*dy)
 
     return dist
+
+def point_in_rect(p, rect):
+    x1,y1 = p
+    x2,y2,x3,y3 = rect
+    return x2<=x1<=x3 and y2<=y1<=y3
+
+def rectangle_intersects_line(p1, p2, rect):
+    x3,y3,x4,y4 = rect
+    w = x4-x3
+    h = y4-y3
+    return line_intersects_line(p1, p2, (x3, y3), (x3+w, y3)) or \
+            line_intersects_line(p1, p2, (x3+w, y3), (x3+w, y3+h)) or \
+            line_intersects_line(p1, p2, (x3+w, y3+h), (x3, y3+h)) or \
+            line_intersects_line(p1, p2, (x3, y3+h), (x3, y3)) or \
+            point_in_rect(p1, rect) or point_in_rect(p2, rect)
+    
+def ccw(A,B,C):
+    return (C[1]-A[1])*(B[0]-A[0]) > (B[1]-A[1])*(C[0]-A[0])
+
+def line_intersects_line(A,B,C,D):
+        return ccw(A,C,D) != ccw(B,C,D) and ccw(A,B,C) != ccw(A,B,D)
+
+
+
  
 class Vec2d(object):
     """2d vector class, supports vector and scalar operators,
