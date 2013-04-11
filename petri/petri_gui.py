@@ -12,6 +12,7 @@ import collections
 import wx.lib.buttons as buttons
 from petrigui.dialog_fields import DialogFields, place_ranged 
 import serializable
+from collections import OrderedDict
 
 
 
@@ -292,6 +293,10 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         self.net.rename_place(from_name=self.unique_id, to_name=value)
         
 class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a stub
+    
+    INSERT_POINT = wx.NewId()
+    REMOVE_POINT = wx.NewId()
+    
     def __init__(self, net, place=None, transition=None, weight=1):
         super(GUIArc, self).__init__(net=net, place=place, transition=transition, weight=weight)
         self.tail_length = 10
@@ -302,6 +307,10 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         self.begin = self.end = None
         self.points = []
         self.points_selected = 0
+        #
+        self.menu_fields = OrderedDict()
+        self.menu_fields[GUIArc.INSERT_POINT] = ('Insert point', self.menu_insert_point)
+        self.menu_fields[GUIArc.REMOVE_POINT] = ('Remove point', self.menu_remove_point)
         
     def points_to_json_struct(self):
         return [point.get_position() for point in self.points]
@@ -364,9 +373,6 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
                 resulting_vec = b - a
                 return a + resulting_vec*dist_proportion, resulting_vec
                 
-                
-                
-            
     def draw_segment(self, dc, fr, to):
         x1, y1 = fr[0], fr[1]
         x2, y2 = to[0], to[1]
@@ -374,7 +380,6 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         dc.DrawLine(x1, y1, x2, y2)
         
     def draw_arrow(self, dc, fr, to):
-        x,y = fr[0], fr[1]
         end_x, end_y = to[0], to[1]
         vec = -(to - fr)
         vec = vec.normalized()
@@ -382,7 +387,6 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         tail_2 = vec.rotated(-self.tail_angle) * self.tail_length
         dc.DrawLine(end_x, end_y, end_x+tail_1[0], end_y+tail_1[1])
         dc.DrawLine(end_x, end_y, end_x+tail_2[0], end_y+tail_2[1])
-        #dc.DrawLine(x, y, end_x, end_y)
         
     def get_point_next_to(self, obj):
         index = 0 if self.weight>0 else -1
@@ -442,6 +446,35 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         if self.weight < 0:
             value = -value
         self.weight = value
+        
+    def spawn_context_menu(self, parent, event):
+        self.menu_event = event
+        menu = wx.Menu()
+        for event_id, (name, handler) in self.menu_fields.iteritems():
+            menu.Append(event_id, name)
+            parent.Bind(wx.EVT_MENU, handler, id=event_id)
+        parent.PopupMenu(menu, event.GetPositionTuple())
+        menu.Destroy()
+        for event_id, (name, handler) in self.menu_fields.iteritems():
+            parent.Unbind(wx.EVT_MENU, id=event_id)
+        parent.Refresh()
+        
+    def menu_insert_point(self, event):
+        x,y = self.menu_event.GetPositionTuple()
+        a,b = self.get_segment_nearest_to_point(x, y, self.line_pen.GetWidth())
+        arc_point = ArcPoint(self)
+        arc_point.set_position(x, y)
+        try:
+            ind = self.points.index(a)
+        except:
+            ind = 0
+        self.points.insert(ind, arc_point)
+        
+        
+        
+    def menu_remove_point(self, event):
+        #remove me later, just for test
+        print "HI", self
 
             
         
@@ -664,6 +697,7 @@ class Strategy(object):
         self.right_down = False
         self.mouse_x, self.mouse_y = 0, 0
         
+        
     @property
     def panel(self):
         return self._panel()
@@ -746,8 +780,14 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             self.start_dragging()
         self.panel.Refresh()
         
-    
-        
+    def on_right_down(self, event):
+        super(MoveAndSelectStrategy, self).on_right_down(event)
+        obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+        if obj is None:
+            return
+        self.add_to_selection(obj)
+        obj.spawn_context_menu(self.panel, event)
+
     def discard_selection(self):
         if not self.selection:
             return
@@ -886,6 +926,8 @@ class PetriPanel(wx.Panel):
         self.Bind(wx.EVT_LEFT_UP, self.on_left_button_up)
         self.Bind(wx.EVT_MOTION, self.on_mouse_motion)
         self.Bind(wx.EVT_LEFT_DCLICK, self.on_left_button_dclick)
+        self.Bind(wx.EVT_RIGHT_DOWN, self.on_right_button_down)
+        self.Bind(wx.EVT_RIGHT_UP, self.on_right_button_up)
         self.size = 0, 0
         self.mouse_x = self.mouse_y = 0
         
@@ -902,6 +944,7 @@ class PetriPanel(wx.Panel):
             self.petri = GUIPetriNet.from_string("""
                 # p1::1
                 p1 -> t2 ->
+                p2 -> t3 ->
             """)
             
             
@@ -954,6 +997,12 @@ class PetriPanel(wx.Panel):
         self.mouse_in = True
         self.on_lbutton_timer()
         self.strategy.on_left_down(event)
+        
+    def on_right_button_down(self, event):
+        self.strategy.on_right_down(event)
+        
+    def on_right_button_up(self, event):
+        self.strategy.on_right_up(event)
         
     def on_left_button_dclick(self, event):
         self.strategy.on_left_dclick(event)
