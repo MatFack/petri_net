@@ -8,6 +8,13 @@ import petri
 import vector_2d as vec2d
 import itertools
 import json
+import collections
+import wx.lib.buttons as buttons
+from petrigui.dialog_fields import DialogFields, place_ranged 
+
+
+
+
 
 if __name__ == '__main__':
     app = wx.App(False)
@@ -32,18 +39,91 @@ def rectangles_intersect(rect1, rect2):
     separate = r1 < l2 or l1 > r2 or t1>b2 or b1<t2
     #print separate
     return not separate 
+
+
+
+class ElementPropertiesDialog(wx.Dialog):
+    def __init__(self, parent, window_id, title, obj, fields):
+        self.fields = collections.OrderedDict()
+        for field, value in fields:
+            self.fields[field] = value
+        self.obj = obj
+        super(ElementPropertiesDialog, self).__init__(parent, window_id, title)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self.result = {} #
+        
+        sb = wx.StaticBox(self, label=title)
+        sbs = wx.StaticBoxSizer(sb, orient=wx.VERTICAL)
+        self.InitUI(sbs)
+
+        sizer.Add(sbs, border=5, proportion=1, flag=wx.ALL|wx.EXPAND)
+        
+        hbox2 = wx.BoxSizer(wx.HORIZONTAL)
+        okButton = wx.Button(self, wx.ID_OK, label='Ok')
+        closeButton = wx.Button(self, wx.ID_CANCEL, label='Cancel')
+        hbox2.Add(okButton)
+        hbox2.Add(closeButton, flag=wx.LEFT, border=5)
+        sizer.Add(hbox2, 
+            flag=wx.ALIGN_CENTER|wx.TOP|wx.BOTTOM, border=10)
+        
+        okButton.Bind(wx.EVT_BUTTON, self.OnOk)
+        closeButton.Bind(wx.EVT_BUTTON, self.OnCancel)
+        
+        
+        self.SetSizer(sizer)
+        self.Fit()
+        
+    def OnOk(self, event):
+        for field_name, (label, getter, setter) in self.fields.iteritems():
+            control = self.field_controls[field_name]
+            value = setter(control)
+            self.result[field_name] = value
+            if getattr(self.obj, field_name, None) == value:
+                continue
+            checker = getattr(self.obj, 'check_update_'+field_name, None)
+            if checker:
+                try:
+                    checker(value)
+                except Exception, e:
+                    error = getattr(e,'message','')
+                    error = '\n'+error if error else error
+                    wx.MessageBox("Incorrect value for field %s.%s"%(field_name, error))
+                    return
+        self.UpdateObjectValues()
+        self.Destroy()
+        self.SetReturnCode(wx.ID_OK)
+        
+    def UpdateObjectValues(self):
+        for field, value in self.result.iteritems():
+            if getattr(self.obj, field, None) != value:
+                updater = getattr(self.obj, 'update_'+field, None)
+                if updater is not None:
+                    updater(value)
+                else:
+                    setattr(self.obj, field, value)
+        
+    def OnCancel(self, event):
+        self.Destroy()
+        self.SetReturnCode(wx.ID_CANCEL)
+        
+    def InitUI(self, sizer):
+        self.field_controls = {}
+        for field_name, (label, getter, setter) in self.fields.iteritems():
+            value = getattr(self.obj, field_name, '')
+            self.result[field_name] = value
+            hbox1 = wx.BoxSizer(wx.HORIZONTAL)
+            hbox1.Add(wx.StaticText(self, label=label))
+            control = getter(self, value)
+            hbox1.Add(control, flag=wx.LEFT, border=5, )
+            self.field_controls[field_name] = control
+            sizer.Add(hbox1)
+            
+
     
 class PositionMixin(object):
     def __init__(self, *args, **kwargs):
         self.pos_x, self.pos_y = kwargs.get('pos_x', 0), kwargs.get('pos_y', 0)
-        self.selected = False
-        self.temporary_selected = False
         super(PositionMixin, self).__init__(*args, **kwargs)
-    
-    @property
-    def is_selected(self):
-        return self.selected or self.temporary_selected
-        
         
     def set_position(self, x, y):
         self.pos_x = x
@@ -59,16 +139,37 @@ class PositionMixin(object):
         self.pos_x = self.memo_x + diff_x
         self.pos_y = self.memo_y + diff_y
         
+class SelectionMixin(object):
+    def __init__(self, *args, **kwargs):
+        self.selected = False
+        self.temporary_selected = False
+        self.temporary_discarded = False
+        super(SelectionMixin, self).__init__(*args, **kwargs)
+        
+    @property
+    def is_selected(self):
+        return False if self.temporary_discarded else self.selected or self.temporary_selected
+        
+    def unselect_temporary(self):
+        self.temporary_discarded = self.temporary_selected = False
+        
+    def set_selected(self, selected):
+        if not selected:
+            self.unselect_temporary()
+        self.selected = selected
+        
 
-class GUIPlace(PositionMixin, petri.Place):
+        
+
+class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
     pos_x_to_serialize = True
     pos_y_to_serialize = True
-    def __init__(self, unique_id=None, tokens=0, position=None):
+    def __init__(self, net, unique_id=None, tokens=0, position=None):
         """
         unique_id - unique identifier (hash if None)
         tokens - number of tokens in initial marking
         """
-        super(GUIPlace, self).__init__(unique_id=unique_id, tokens=tokens)
+        super(GUIPlace, self).__init__(net=net, unique_id=unique_id, tokens=tokens)
         self.radius = 14
            
     def draw(self, dc):
@@ -117,34 +218,71 @@ class GUIPlace(PositionMixin, petri.Place):
         bounding_rect = (self.pos_x-r, self.pos_y-r, self.pos_x+r, self.pos_y+r)
         return rectangles_intersect(bounding_rect, (lx, ly, tx, ty))
     
-    def get_begin(self, vec, arc):
+    def get_begin(self, arc):
         pos = vec2d.Vec2d(self.get_position())
-        pos -= vec.normalized()*self.radius
-        return pos
-    
-    def get_end(self, vec, arc):
-        pos = vec2d.Vec2d(self.get_position())
+        vec = vec2d.Vec2d(arc.get_point_next_to(self)) - pos
         pos += vec.normalized()*self.radius
         return pos
+    
+    def get_end(self, arc):
+        pos = vec2d.Vec2d(self.get_position())
+        vec = vec2d.Vec2d(arc.get_point_next_to(self)) - pos
+        pos += vec.normalized()*self.radius
+        return pos
+    
+    
+    
+    def open_properties_dialog(self, parent):
+        fields = [ ('unique_id', DialogFields.unique_id),
+                   ('tokens', place_ranged('Tokens', minimum=0)),
+                   ('radius', place_ranged('Radius', minimum=5))
+                   ]
+        dia = ElementPropertiesDialog(parent, -1, 'Place properties', obj=self, fields=fields)
+        dia.ShowModal()
+        dia.Destroy()      
         
-class GUIArc(petri.Arc):
-    def __init__(self, place=None, transition=None, weight=0):
-        super(GUIArc, self).__init__(place=place, transition=transition, weight=weight)
+    def check_update_unique_id(self, value):
+        if value in self.net.places:
+            raise ValueError, "A place with such name already exists"
+        
+    def update_unique_id(self, value):
+        self.net.rename_place(from_name=self.unique_id, to_name=value)
+        
+class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a stub
+    def __init__(self, net, place=None, transition=None, weight=0):
+        super(GUIArc, self).__init__(net=net, place=place, transition=transition, weight=weight)
         self.tail_length = 10
         self.tail_angle = 15
-        self.line_pen = wx.Pen(wx.BLACK, 2)
+        line_width = 2
+        self.line_pen = wx.Pen(wx.BLACK, line_width)
+        self.line_selected_pen = wx.Pen("Blue", line_width)
+        self.begin = self.end = None
+        self.points = [ArcPoint(self), ArcPoint(self)]
+        import random
+        self.points[0].set_position(random.randrange(10,380),random.randrange(10,380))
+        #self.points = []
+        self.points_selected = 0
         
+    def select_line_pen(self, dc):
+        if self.selected:
+            dc.SetPen(self.line_selected_pen)
+        else:
+            dc.SetPen(self.line_pen)
+            
     def draw(self, dc):
-        dc.SetPen(self.line_pen)
+        self.select_line_pen(dc)
         fr = self.place
         to = self.transition
         if self.weight<0:
             fr, to = to, fr
-        fr_center = vec2d.Vec2d(fr.get_position())
-        to_center = vec2d.Vec2d(to.get_position())
-        direction = fr_center - to_center
-        fr_begin = fr.get_begin(direction, self)
-        to_end = to.get_end(direction, self)
+        fr_begin = fr.get_begin(self)
+        to_end = to.get_end(self)
+        self.begin = fr_begin
+        self.end = to_end
+        for fr, to in self._iter_segments():
+            self.draw_segment(dc, fr, to)
+            fr_begin = fr
+        fr_begin = vec2d.Vec2d(fr_begin)
         self.draw_arrow(dc, fr_begin, to_end)
         abs_weight = abs(self.weight)
         if abs_weight>1:
@@ -155,6 +293,12 @@ class GUIArc(petri.Arc):
             label_vec = to_end - fr_begin
             label_vec_perp = label_vec.perpendicular_normal()*max(th,tw)*0.5
             draw_text(dc, label, label_x+label_vec_perp[0], label_y+label_vec_perp[1])
+            
+    def draw_segment(self, dc, fr, to):
+        x1, y1 = fr[0], fr[1]
+        x2, y2 = to[0], to[1]
+        self.select_line_pen(dc)
+        dc.DrawLine(x1, y1, x2, y2)
         
     def draw_arrow(self, dc, fr, to):
         x,y = fr[0], fr[1]
@@ -165,17 +309,89 @@ class GUIArc(petri.Arc):
         tail_2 = vec.rotated(-self.tail_angle) * self.tail_length
         dc.DrawLine(end_x, end_y, end_x+tail_1[0], end_y+tail_1[1])
         dc.DrawLine(end_x, end_y, end_x+tail_2[0], end_y+tail_2[1])
-        dc.DrawLine(x, y, end_x, end_y)
+        #dc.DrawLine(x, y, end_x, end_y)
         
     def get_point_next_to(self, obj):
+        index = 0 if self.weight>0 else -1
         if obj==self.place:
-            return self.transition.get_position()
+            next_obj = self.points[index] if self.points else self.transition
         elif obj==self.transition:
-            return self.place.get_position()
+            next_obj = self.points[-1-index] if self.points else self.place
+        return next_obj.get_position()
+        
+    def contains_point(self, x, y):
+        if self.begin is None or self.end is None:
+            return False
+        for fr, to in self._iter_segments():
+            x1, y1 = fr[0], fr[1]
+            x2, y2 = to[0], to[1]
+            distance = vec2d.dist(x1, y1, x2, y2, x, y)
+            if distance <= self.line_pen.GetWidth():
+                return True
+        return False
+    
+    def _iter_points(self, include_first=True):
+        """ Returns object that provide a[0] a[1], this generator returns vectors and tuples."""
+        if include_first:
+            yield self.begin
+        for point in self.points:
+            yield point.get_position()
+        yield self.end
+        
+    def _iter_segments(self):
+        for a,b in itertools.izip(self._iter_points(), self._iter_points(include_first=False)):
+            yield a,b
+                
+    
+    def in_rect(self, lx, ly, tx, ty):
+        pass
+
+            
+        
+class ArcPoint(SelectionMixin, PositionMixin):
+    def __init__(self, arc):
+        super(ArcPoint, self).__init__()
+        self.arc = arc
+        self.width = 7
+        self.height = 7
+        
+    def get_rectangle(self):
+        x,y = self.pos_x, self.pos_y
+        w,h = self.width,self.height
+        return x-w/2,y-h/2,w,h
+    
+    def set_selected(self, selected):
+        previous = self.is_selected
+        super(ArcPoint, self).set_selected(selected)
+        new = self.is_selected
+        if new and not previous:
+            self.arc.points_selected+=1
+        elif previous and not new:
+            self.arc.points_selected -=1
         
         
+    
+    def contains_point(self, x, y):
+        r_x,r_y,r_w,r_h = self.get_rectangle()
+        return (r_x <= x <= r_x+r_w) and (r_y <= y <= r_y+r_h)
+    
+    def in_rect(self, lx, ly, tx, ty):
+        x, y, w, h = self.get_rectangle()
+        return rectangles_intersect((x, y, x+w, y+h), (lx, ly, tx, ty))
+    
+    def draw(self, dc):
+        if not self.arc.points_selected and not self.arc.is_selected:
+            return 
+        x, y, w, h = self.get_rectangle()
+        if self.selected:
+            dc.SetPen(BLUE_PEN)
+        else:
+            dc.SetPen(wx.BLACK_PEN)
+        dc.SetBrush(wx.WHITE_BRUSH)
+        dc.DrawRectangle(x, y, w, h)
         
-class GUITransition(PositionMixin, petri.Transition):
+        
+class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
     ARC_CLS = GUIArc
     
     pos_x_to_serialize = True
@@ -224,6 +440,7 @@ class GUITransition(PositionMixin, petri.Transition):
         self.width, self.height = self.height, self.width
         
     def draw(self, dc):
+        self.precalculate_arcs()
         rect = self.get_rectangle()
         x,y,w,h = rect
         if self.is_enabled:
@@ -249,15 +466,14 @@ class GUITransition(PositionMixin, petri.Transition):
     def in_rect(self, lx, ly, tx, ty):
         x, y, w, h = self.get_rectangle()
         return rectangles_intersect((x, y, x+w, y+h), (lx, ly, tx, ty))
-
     
-    def get_begin(self, vec, arc):
-        return self.get_touch_point(vec, arc)
+    def get_begin(self, arc):
+        return self.get_touch_point(arc)
     
-    def get_end(self, vec, arc):
-        return self.get_touch_point(vec, arc)
+    def get_end(self, arc):
+        return self.get_touch_point(arc)
     
-    def get_touch_point(self, vec, arc):
+    def get_touch_point(self, arc):
         result = vec2d.Vec2d(self.get_position())
         order, total_order, direction = self.side_slots[arc]
         order = (order + 1) / float(total_order+1)
@@ -301,12 +517,21 @@ class GUITransition(PositionMixin, petri.Transition):
             signum = 1 if (n==0 or n==3) else -1
             self.side_slots.update(dict((elem[0], (i, len(slot), n)) for i, elem in enumerate(sorted(slot, key=lambda x:x[1])[::signum])))
         
-                
-            
+    def open_properties_dialog(self, parent):
+        fields = [ ('unique_id', DialogFields.unique_id),
+                   ('width', place_ranged('Width', minimum=5)),
+                   ('height', place_ranged('Height', minimum=5)),
+                   ] 
+        dia = ElementPropertiesDialog(parent, -1, 'Transition properties', obj=self, fields=fields)
+        dia.ShowModal()
+        dia.Destroy()      
         
-            
-            
-        #print "HERE!"
+    def check_update_unique_id(self, value):
+        if value in self.net.transitions:
+            raise ValueError, "A transition with such name already exists"
+        
+    def update_unique_id(self, value):
+        self.net.rename_transition(from_name=self.unique_id, to_name=value)
         
         
         
@@ -315,19 +540,37 @@ class GUIPetriNet(petri.PetriNet):
     PLACE_CLS = GUIPlace
     TRANSITION_CLS = GUITransition
     
+    def rename_place(self, from_name, to_name):
+        place = self.remove_place(from_name)
+        place.unique_id = to_name
+        self.add_place(place)
+        
+    def rename_transition(self, from_name, to_name):
+        transition = self.remove_transition(from_name)
+        transition.unique_id = to_name
+        self.add_transition(transition)
+
+    
 
 class Strategy(object):
     def __init__(self, panel):
-        self.panel = panel
+        self._panel = panel
         self.left_down = False
         self.right_down = False
         self.mouse_x, self.mouse_y = 0, 0
+        
+    @property
+    def panel(self):
+        return self._panel()
         
     def set_mouse_coords(self, event):
         self.mouse_x, self.mouse_y = event.m_x, event.m_y
         
     def on_left_down(self, event):
         self.left_down = True
+        self.set_mouse_coords(event)
+        
+    def on_left_dclick(self, event):
         self.set_mouse_coords(event)
     
     def on_left_up(self, event):
@@ -345,8 +588,23 @@ class Strategy(object):
     def on_motion(self, event):
         self.set_mouse_coords(event)
         
+    def draw(self, dc):
+        pass
     
-class MoveAndSelectStrategy(Strategy):
+    def on_switched(self):
+        pass
+        
+class PropertiesMixin(object):
+    def on_left_dclick(self, event):
+        super(PropertiesMixin, self).on_left_dclick(event)
+        obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+        if not obj:
+            return
+        obj.open_properties_dialog(self.panel)
+        self.panel.Refresh()
+        
+    
+class MoveAndSelectStrategy(PropertiesMixin, Strategy):
     def __init__(self, panel):
         super(MoveAndSelectStrategy, self).__init__(panel=panel)
         self.selection = set()
@@ -358,12 +616,10 @@ class MoveAndSelectStrategy(Strategy):
         
     def on_left_down(self, event):
         super(MoveAndSelectStrategy, self).on_left_down(event)
-        print dir(event)
         obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
         if not (event.ControlDown() or event.AltDown()):
-            #obj not in self.selection:
-            print "Discarding"
-            self.discard_selection()
+            if obj not in self.selection:
+                self.discard_selection()
         self.obj_under_mouse = obj
         if obj is None:
             self.choosing_rect_left = self.mouse_x, self.mouse_y
@@ -376,6 +632,8 @@ class MoveAndSelectStrategy(Strategy):
             self.add_to_selection(obj)  
             self.start_dragging()
         self.panel.Refresh()
+        
+    
         
     def discard_selection(self):
         if not self.selection:
@@ -398,6 +656,10 @@ class MoveAndSelectStrategy(Strategy):
         diff_x, diff_y = self.mouse_x - self.drag_mouse_x, self.mouse_y - self.drag_mouse_y
         for obj in self.selection:
             obj.move_diff(diff_x, diff_y)
+            
+    def on_switched(self):
+        self.discard_selection()
+        self.panel.Refresh()
         
     def on_motion(self, event):
         if not event.LeftIsDown():
@@ -420,7 +682,13 @@ class MoveAndSelectStrategy(Strategy):
         else:
             result = gen
         for obj in result:
-            obj.set_selected(not alt_down)
+            if return_selection:
+                obj.unselect_temporary()
+                continue
+                # This is left button up event, no need to calculate temporary values
+            obj.temporary_selected = not alt_down
+            if alt_down:
+                obj.temporary_discarded = True
         return result if return_selection else None
         
     def points_to_rect(self, left, right):
@@ -479,6 +747,7 @@ class SimulateStrategy(Strategy):
             if obj.is_enabled:
                 obj.fire()
                 self.panel.Refresh()
+                print self.panel.petri.get_state()
     
     
 
@@ -491,7 +760,8 @@ class PetriPanel(wx.Panel):
         self.Bind(wx.EVT_LEFT_DOWN, self.on_left_button_down)
         self.Bind(wx.EVT_LEFT_UP, self.on_left_button_up)
         self.Bind(wx.EVT_MOTION, self.on_mouse_motion)
-        self.size = None
+        self.Bind(wx.EVT_LEFT_DCLICK, self.on_left_button_dclick)
+        self.size = 0, 0
         self.mouse_x = self.mouse_y = 0
         
         try:
@@ -500,23 +770,25 @@ class PetriPanel(wx.Panel):
             self.petri = GUIPetriNet.from_string("""
                 # p1::1 p2::2 p3::3 p4::4 p5::5
                 p2 -> t1 -> p1 p3
-                p1 -> t2 -> p3::100
+                p1 -> t2 -> p3
                 p1 -> t3 -> p4
                 p3 p4 -> t4 -> p2
             """)
             
             
-        self.strategy = MoveAndSelectStrategy(self)
+        #self.strategy = MoveAndSelectStrategy(self)
         #self.strategy = SimulateStrategy(self)
         #self.petri.transitions['t1'].set_horizontal(True)
         
-        self.cur_obj = None #TODO: replace with strategies (now just for debug)
+    @property
+    def strategy(self):
+        return self.GetParent().strategy
         
     def GetObjectsInRect(self, lx, ly, tx, ty):
         if not self.petri:
             return
-        for obj in itertools.chain(self.petri.get_places(), self.petri.get_transitions()):
-            obj.set_temp_selected(False)
+        for obj in self.get_objects_iter():
+            obj.unselect_temporary()
             if obj.in_rect(lx, ly, tx, ty):
                 yield obj
         
@@ -541,7 +813,7 @@ class PetriPanel(wx.Panel):
         
     def on_paint_event(self, event):
         dc = wx.BufferedPaintDC(self)
-        w,h = self.size
+        w, h = self.size
         dc.SetPen(wx.WHITE_PEN)
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawRectangle(0,0,w,h)
@@ -551,6 +823,9 @@ class PetriPanel(wx.Panel):
         self.mouse_in = True
         self.on_lbutton_timer()
         self.strategy.on_left_down(event)
+        
+    def on_left_button_dclick(self, event):
+        self.strategy.on_left_dclick(event)
         
     def on_lbutton_timer(self, *args, **kwargs):
         x, y, w, h = self.GetScreenRect()
@@ -571,12 +846,10 @@ class PetriPanel(wx.Panel):
         
     def get_object_at(self, x, y):
         # Check in reverse order so the topmost object will be selected
-        places = list(self.petri.get_places())
-        transitions = list(self.petri.get_transitions())
-        objects = transitions[::-1] + places[::-1] 
-        for obj in objects:
+        for obj in self.get_objects_reversed_iter():
             if obj.contains_point(x, y):
                 return obj
+
         
     def on_mouse_motion(self, event):
         self.strategy.on_motion(event)
@@ -584,18 +857,33 @@ class PetriPanel(wx.Panel):
     def on_left_button_up(self, event):
         self.strategy.on_left_up(event)
         
+    def get_objects_iter(self):
+        for place in self.petri.get_places_iter():
+            yield place
+        for transition in self.petri.get_transitions_iter():
+            yield transition
+        for transition in self.petri.get_transitions_iter():   
+            for arc in transition.get_arcs():
+                yield arc
+                for point in arc.points:
+                    yield point
+        
+    def get_objects_reversed_iter(self):
+        for transition in reversed(self.petri.get_transitions()):
+            for arc in reversed(transition.get_arcs()):
+                for point in reversed(arc.points):
+                    yield point
+                yield arc
+        for transition in reversed(self.petri.get_transitions()):
+            yield transition
+        for place in reversed(self.petri.get_places()):
+            yield place
+        
     def draw(self, dc, w, h):
         if not self.petri:
             return
-        for place in self.petri.get_places():
-            place.draw(dc)
-        for transition in self.petri.get_transitions():
-            transition.draw(dc)
-            transition.precalculate_arcs()
-            for arc in transition.input_arcs:
-                arc.draw(dc)
-            for arc in transition.output_arcs:
-                arc.draw(dc)
+        for obj in self.get_objects_iter():
+            obj.draw(dc)
         self.strategy.draw(dc)
         
         """
@@ -610,16 +898,65 @@ class Example(wx.Frame):
     def __init__(self, parent, title):
         super(Example, self).__init__(parent, title=title, 
             size=(500, 500))
-
-        self.petri_panel = PetriPanel(self)
+        vert_sizer = wx.BoxSizer(wx.VERTICAL)
+        buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        
+        bmp_mouse = wx.Bitmap("icons/arrow.png", wx.BITMAP_TYPE_ANY)
+        bmp_animate = wx.Bitmap("icons/animate.png", wx.BITMAP_TYPE_ANY)
+        
+        mouse_button = buttons.GenBitmapToggleButton(self, bitmap=bmp_mouse)
+        
+        self.buttons = [(mouse_button, MoveAndSelectStrategy(self.panel_getter)),
+                         (buttons.GenBitmapToggleButton(self, bitmap=bmp_animate), SimulateStrategy(self.panel_getter)),
+                         ]
+        
+        for button,_ in self.buttons:
+            buttons_sizer.Add(button)
+            self.Bind(wx.EVT_BUTTON, self.on_toggle_button)
+            
+        self.buttons = dict(self.buttons)
+        
+        self.strategy = self.buttons[mouse_button]
+            
+        self.toggle_button(mouse_button)
+            
+        vert_sizer.Add(buttons_sizer)
+        self._petri_panel = PetriPanel(self)
+        self.petri_panel.SetFocus()
+        vert_sizer.Add(self.petri_panel, proportion=1, flag=wx.EXPAND)
+        self.SetSizer(vert_sizer)
         self.Centre() 
         self.Show()
+        
+    def panel_getter(self):
+        return self._petri_panel
+    
+    petri_panel = property(panel_getter)
+        
+    def toggle_button(self, button_on):
+        button_on.SetValue(True)
+        for button in self.buttons:
+            if button!=button_on:
+                button.SetValue(False)
+                
+    def on_toggle_button(self, event):
+        button_on = event.GetEventObject()
+        if not button_on.GetValue(): #can't untoggle 
+            button_on.SetValue(True)
+            return
+        for button in self.buttons:
+            if button != button_on:
+                button.SetValue(False)
+        self.strategy.on_switched()
+        self.strategy = self.buttons[button_on]
+        
 
 
 if __name__ == '__main__':
     Example(None, 'Line')
     app.MainLoop()
-    
+    '''
     p  = GUIPlace('p1', 1, (100,100))
     x = p.to_json_struct()
     p2 = GUIPlace.from_json_struct(x, unique_id='p1')
@@ -633,4 +970,5 @@ if __name__ == '__main__':
     """,)
     
     print net1.to_json_struct()
+    '''
     

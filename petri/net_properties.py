@@ -13,12 +13,12 @@ def get_ts_invariants(petri_net, places=None, transitions=None):
         transitions = _reverse_index(petri_net.get_sorted_transitions())
     A = np.zeros((len(places), len(transitions)))
     for transition,col in transitions.iteritems():
-        for place,weight in transition.input_arcs.iteritems():
-            row = places[place]
-            A[row,col] -= weight
-        for place,weight in transition.output_arcs.iteritems():
-            row = places[place]
-            A[row,col] += weight
+        for arc in transition.input_arcs:
+            row = places[arc.place]
+            A[row,col] -= abs(arc.weight)
+        for arc in transition.output_arcs:
+            row = places[arc.place]
+            A[row,col] += abs(arc.weight)
     t_inv = tss.solve(A)
     s_inv = tss.solve(A.transpose())
     return t_inv, s_inv
@@ -40,9 +40,11 @@ def get_deadlocks_traps(petri_net, places=None, transitions=None):
     tr_i = 0
     for transition in transitions:
         #deadlocks
-        for place_out in transition.output_arcs:
+        for arc_out in transition.output_arcs:
+            place_out = arc_out.place
             #setting positive
-            for place_in in transition.input_arcs:
+            for arc_in in transition.input_arcs:
+                place_in = arc_in.place
                 col = places[place_in]
                 dl_A[dl_i, col] = 1
             #setting one negative
@@ -50,9 +52,11 @@ def get_deadlocks_traps(petri_net, places=None, transitions=None):
             dl_A[dl_i, col] = -1
             dl_i += 1
         #traps
-        for place_in in transition.input_arcs:
+        for arc_in in transition.input_arcs:
+            place_in = arc_in.place
             #setting positive
-            for place_out in transition.output_arcs:
+            for arc_out in transition.output_arcs:
+                place_out = arc_out.place
                 col = places[place_out]
                 tr_A[tr_i, col] = 1
             #setting one negative
@@ -118,7 +122,7 @@ if __name__=='__main__':
     c1 = net1.new_transition('c2', '3cr2', '7quiet2 1key')
     """
     net1 = petri.PetriNet.from_string("""
-    # 
+    # p1::1 p2::1 p3::1 p4::1
     p2 -> t1 -> p1 p3
     p1 -> t2 -> p3
     p1 -> t3 -> p4

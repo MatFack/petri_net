@@ -11,7 +11,8 @@ class Arc(Serializable):
     """
     weight_to_serialize = True
 
-    def __init__(self, place=None, transition=None, weight=0):
+    def __init__(self, net, place=None, transition=None, weight=0):
+        self.net=net
         self.place = place
         self.transition = transition
         self.weight = weight
@@ -40,26 +41,26 @@ class Transition(Serializable):
     ARC_CLS = Arc
     
     unique_id_to_serialize = True
-    def __init__(self, unique_id=None, input_arcs=None, output_arcs=None, net=None):
+    def __init__(self, net, unique_id=None, input_arcs=None, output_arcs=None):
         """
             unique_id - unique identifier (hash if None)
             input_arcs, output_arcs - dictionary
                 { place : weight }
             net - petri net (only if arcs are represented as strings)
         """
-        self.input_arcs = self._convert_arcs(input_arcs, net, is_input=True)
-        self.output_arcs = self._convert_arcs(output_arcs, net, is_input=False)
+        self.net = net
+        self.input_arcs = self._convert_arcs(input_arcs, is_input=True)
+        self.arcs_cache = None
+        self.output_arcs = self._convert_arcs(output_arcs, is_input=False)
         self.unique_id = hash(self) if unique_id is None else unique_id
         
-    def _convert_arcs(self, arcs, net, is_input):
+    def _convert_arcs(self, arcs, is_input):
         if isinstance(arcs, basestring):
-            return set(self._str_to_arc(arc,net, is_input) for arc in arcs.split())
+            return set(self._str_to_arc(arc, is_input) for arc in arcs.split())
         else:
             return set(arcs or [])
     
-    def _str_to_arc(self, arc_str, net, is_input):
-        if net is None:
-            raise ValueError("Expected petri `net` instance, but got None")
+    def _str_to_arc(self, arc_str, is_input):
         if '::' in arc_str:
             place_name, _, weight = arc_str.rpartition('::')
             weight = int(weight)
@@ -68,9 +69,13 @@ class Transition(Serializable):
             weight = 1
         if not is_input:
             weight = -weight
-        place = net.get_or_create_place(place_name)
-        return self.__class__.ARC_CLS(place, transition=self, weight=weight)
+        place = self.net.get_or_create_place(place_name)
+        return self.__class__.ARC_CLS(net=self.net, place=place, transition=self, weight=weight)
             
+    def get_arcs(self):
+        if self.arcs_cache is None:
+            self.arcs_cache = list(self.input_arcs) + list(self.output_arcs)            
+        return self.arcs_cache
         
     @property
     def is_enabled(self):
@@ -98,7 +103,7 @@ class Transition(Serializable):
     def input_arcs_from_json_struct(cls, input_arcs_obj, places_dct, constructed_obj, **kwargs):
         input_arcs = []
         for obj in input_arcs_obj:
-            constructor_args = dict(transition=constructed_obj)
+            constructor_args = dict(net=constructed_obj.net, transition=constructed_obj)
             arc = cls.ARC_CLS.from_json_struct(obj, constructor_args, places_dct=places_dct, **kwargs)
             input_arcs.append(arc)
         return set(input_arcs)
@@ -106,8 +111,9 @@ class Transition(Serializable):
     @classmethod 
     def output_arcs_from_json_struct(cls, output_arcs_obj, places_dct, constructed_obj, **kwargs):
         output_arcs = []
+        print kwargs
         for obj in output_arcs_obj:
-            constructor_args = dict(transition=constructed_obj)
+            constructor_args = dict(net=constructed_obj.net, transition=constructed_obj)
             arc = cls.ARC_CLS.from_json_struct(obj, constructor_args, places_dct=places_dct, **kwargs)
             output_arcs.append(arc)
         return set(output_arcs)
@@ -117,11 +123,12 @@ class Place(Serializable):
     tokens_to_serialize = True
     unique_id_to_serialize = True
     
-    def __init__(self, unique_id=None, tokens=0):
+    def __init__(self, net, unique_id=None, tokens=0):
         """
         unique_id - unique identifier (hash if None)
         tokens - number of tokens in initial marking
         """
+        self.net = net
         self.tokens = tokens
         tokens+1,tokens-1
         assert(tokens>=0)
@@ -149,28 +156,71 @@ class PetriNet(Serializable):
     def __init__(self, places=None, transitions=None):
         self.places = dict(places or {})
         self.transitions = dict(transitions or {}) 
+        self.cached_places = None
+        self.cached_transitions = None
+        self.cached_sorted_places = None
+        self.cached_sorted_transitions = None
         
     def add_place(self, place):
+        print place.unique_id
+        print self.places
         assert(place.unique_id not in self.places)
         self.places[place.unique_id] = place
+        self.on_places_changed()
+        
+    def on_places_changed(self):
+        self.cached_places = None
+        self.cached_sorted_places = None
+        
+    def on_transitions_changed(self):
+        self.cached_transitions = None
+        self.cached_sorted_transitions = None
+        
+    def remove_place(self, place_name):
+        result = self.places.pop(place_name)
+        self.on_places_changed()
+        return result
         
     def add_transition(self, transition):
         assert(transition.unique_id not in self.transitions)
         self.transitions[transition.unique_id] = transition
+        self.on_transitions_changed()
         
-    def get_places(self):
+    def remove_transition(self, transition_name):
+        result = self.transitions.pop(transition_name)
+        self.on_transitions_changed()
+        return result
+        
+    def get_places_iter(self):
         for place in self.places.itervalues():
             yield place
             
-    def get_transitions(self):
+    def get_transitions_iter(self):
         for transition in self.transitions.itervalues():
             yield transition
+            
+    def get_places(self):
+        if self.cached_places is None:
+            self.cached_places = self.places.values()
+        return self.cached_places
+    
+    def get_transitions(self):
+        if self.cached_transitions is None:
+            self.cached_transitions = self.transitions.values()
+        return self.cached_transitions
         
     def get_sorted_places(self):
-        return [self.places[key] for key in sorted(self.places.keys())]
+        if self.cached_sorted_places is None:
+            self.cached_sorted_places = [self.places[key] for key in sorted(self.places.keys())]
+        return self.cached_sorted_places
     
     def get_sorted_transitions(self):
-        return [self.transitions[key] for key in sorted(self.transitions.keys())]
+        if self.cached_sorted_transitions is None:
+            self.cached_sorted_transitions = [self.transitions[key] for key in sorted(self.transitions.keys())]
+        return self.cached_sorted_transitions
+    
+    def get_state(self):
+        return [place.tokens for place in self.get_sorted_places()]
         
     def __getitem__(self, key):
         return self.places[key]
@@ -199,28 +249,30 @@ class PetriNet(Serializable):
         return [place.to_json_struct() for place in self.places.itervalues()]
     
     @classmethod
-    def places_from_json_struct(cls, places_obj, **kwargs):
+    def places_from_json_struct(cls, places_obj, constructed_obj, **kwargs):
         places = {}
         for place_obj in places_obj:
-            place_obj = cls.PLACE_CLS.from_json_struct(place_obj)
+            constructor_args = dict(net=constructed_obj)
+            place_obj = cls.PLACE_CLS.from_json_struct(place_obj, constructor_args=constructor_args)
             places[place_obj.unique_id] = place_obj
         return places
     
     @classmethod
-    def transitions_from_json_struct(cls, transitions_obj, fields_values, **kwargs):
+    def transitions_from_json_struct(cls, transitions_obj, fields_values, constructed_obj, **kwargs):
         places = fields_values.get('places')
         if places is None:
             raise RequiredException('places')
         transitions = {}
         for transition_obj in transitions_obj:
-            transition_obj = cls.TRANSITION_CLS.from_json_struct(transition_obj, places_dct=places)
+            constructor_args = dict(net=constructed_obj)
+            transition_obj = cls.TRANSITION_CLS.from_json_struct(transition_obj, places_dct=places, constructor_args=constructor_args)
             transitions[transition_obj.unique_id] = transition_obj
         return transitions
     
     def get_or_create_place(self, place_name):
         if place_name in self.places:
             return self.places[place_name]
-        place = self.new_place(unique_id=place_name)
+        place = self.new_place(net=self, unique_id=place_name)
         return place
     
     @classmethod
@@ -238,7 +290,10 @@ class PetriNet(Serializable):
                     else:
                         name = place
                     tokens = int(tokens)
-                    net.new_place(name, tokens)
+                    if name not in net.places:
+                        print net.places
+                        print name,tokens
+                        net.new_place(net=net, unique_id=name, tokens=tokens)
             c = line.count('->')
             if c not in (1,2):
                 continue
@@ -255,7 +310,7 @@ class PetriNet(Serializable):
                 if place_name not in net.places:
                     net.new_place(unique_id=place_name)
             """
-            net.new_transition(unique_id=name, input_arcs=inp, output_arcs=outp)
+            net.new_transition(net=net, unique_id=name, input_arcs=inp, output_arcs=outp)
         return net
             
 
