@@ -3,8 +3,9 @@
 import wx
 
 def spin_control(parent, value, rng):
-    control = wx.SpinCtrl(parent, value=str(value))
+    control = wx.SpinCtrl(parent)
     control.SetRange(*rng)
+    control.SetValue(int(value))
     return control
 
 

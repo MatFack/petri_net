@@ -228,7 +228,8 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         if self.tokens>4:
             draw_text(dc, str(self.tokens), self.pos_x, self.pos_y)
         elif self.tokens>0:
-            self.draw_tokens(dc)        
+            self.draw_tokens(dc)    
+                
     def draw_tokens(self, dc):
         #This sucks, but who cares
         dc.SetBrush(wx.BLACK_BRUSH)
@@ -292,6 +293,10 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
     def update_unique_id(self, value):
         self.net.rename_place(from_name=self.unique_id, to_name=value)
         
+    def get_depending_objects(self):
+        for arc in self.get_arcs():
+            yield arc
+        
 class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a stub
     
     INSERT_POINT = wx.NewId()
@@ -313,13 +318,12 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         self.menu_fields[GUIArc.REMOVE_POINT] = ('Remove point', self.menu_remove_point)
         
     def points_to_json_struct(self):
-        return [point.get_position() for point in self.points]
+        return [point.to_json_struct() for point in self.points]
     
     def points_from_json_struct(self, points_obj, **kwargs):
         points = []
-        for point in points_obj:
-            arc_point = ArcPoint(self)
-            arc_point.set_position(*point)
+        for point_obj in points_obj:
+            arc_point = ArcPoint.from_json_struct(point_obj, constructor_args=dict(arc=self))
             points.append(arc_point)
         return points
         
@@ -404,12 +408,12 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         """ Returns  (a,b) tuple, where a and b are points """
         if self.begin is None or self.end is None:
             return None
-        for fr, to in self._iter_segments():
+        for i, (fr, to) in enumerate(self._iter_segments()):
             x1, y1 = fr[0], fr[1]
             x2, y2 = to[0], to[1]
             distance = vec2d.dist(x1, y1, x2, y2, x, y)
             if distance <= maximum_distnace:
-                return (fr, to)
+                return i, (fr, to)
         return None
     
     
@@ -434,19 +438,24 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
                 return True
         return False
     
-    def open_properties_dialog(self, parent):
-        fields = [ 
-                   ('weight', place_ranged('Weight', minimum=1))
-                   ]
-        dia = ElementPropertiesDialog(parent, -1, 'Arc properties', obj=self, fields=fields)
-        dia.ShowModal()
-        dia.Destroy()      
-
-    def update_weight(self, value):
+    def __get_weight(self):
+        return abs(self.weight)
+    
+    def __set_weight(self, value):
         if self.weight < 0:
             value = -value
         self.weight = value
         
+    abs_weight = property(__get_weight, __set_weight)
+    
+    def open_properties_dialog(self, parent):
+        fields = [ 
+                   ('abs_weight', place_ranged('Weight', minimum=1))
+                   ]
+        dia = ElementPropertiesDialog(parent, -1, 'Arc properties', obj=self, fields=fields)
+        dia.ShowModal()
+        dia.Destroy()      
+  
     def spawn_context_menu(self, parent, event):
         self.menu_event = event
         menu = wx.Menu()
@@ -461,24 +470,26 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         
     def menu_insert_point(self, event):
         x,y = self.menu_event.GetPositionTuple()
-        a,b = self.get_segment_nearest_to_point(x, y, self.line_pen.GetWidth())
+        ind, (a,b) = self.get_segment_nearest_to_point(x, y, self.line_pen.GetWidth())
         arc_point = ArcPoint(self)
         arc_point.set_position(x, y)
-        try:
-            ind = self.points.index(a)
-        except:
-            ind = 0
         self.points.insert(ind, arc_point)
         
-        
-        
+
     def menu_remove_point(self, event):
         #remove me later, just for test
         print "HI", self
+        
+    def get_depending_objects(self):
+        return []
+    
 
             
         
-class ArcPoint(SelectionMixin, PositionMixin):
+class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
+    pos_x_to_serialize = True
+    pos_y_to_serialize = True
+    
     def __init__(self, arc):
         super(ArcPoint, self).__init__()
         self.arc = arc
@@ -499,8 +510,6 @@ class ArcPoint(SelectionMixin, PositionMixin):
         elif previous and not new:
             self.arc.points_selected -=1
         
-        
-    
     def contains_point(self, x, y):
         r_x,r_y,r_w,r_h = self.get_rectangle()
         return (r_x <= x <= r_x+r_w) and (r_y <= y <= r_y+r_h)
@@ -519,6 +528,9 @@ class ArcPoint(SelectionMixin, PositionMixin):
             dc.SetPen(wx.BLACK_PEN)
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawRectangle(x, y, w, h)
+        
+    def get_depending_objects(self):
+        return []
         
         
 class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
@@ -671,6 +683,8 @@ class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
     def update_unique_id(self, value):
         self.net.rename_transition(from_name=self.unique_id, to_name=value)
         
+    def get_depending_objects(self):
+        return []
         
         
 
@@ -726,6 +740,9 @@ class Strategy(object):
     
     def on_motion(self, event):
         self.set_mouse_coords(event)
+    
+    def on_key_down(self, event):
+        pass
         
     def draw(self, dc):
         pass
@@ -755,8 +772,24 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         self.obj_under_mouse = None
         self.label_moved = None
         
+    def on_key_down(self, event):
+        keycode = event.GetKeyCode()
+        if keycode == wx.WXK_DELETE:
+            self.on_delete()
+            
+    def on_delete(self):
+        net = self.panel.petri
+        to_delete = set()
+        for obj in self.selection:
+            to_delete.add(obj)
+            to_delete.update(obj.get_depending_objects())
+        for obj in to_delete:
+            obj.delete()
+        self.panel.Refresh()
+        
     def on_left_down(self, event):
         super(MoveAndSelectStrategy, self).on_left_down(event)
+        print [self.choosing_rect_left]
         obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
         if isinstance(obj, ObjectLabel):
             self.label_moved = obj
@@ -778,6 +811,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         else:
             self.add_to_selection(obj)  
             self.start_dragging()
+        print "END",[self.choosing_rect_left]
         self.panel.Refresh()
         
     def on_right_down(self, event):
@@ -825,7 +859,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         if self.choosing_rect_left is not None:
             self.update_selected(event.AltDown())
             self.panel.Refresh()
-        elif self.left_down:
+        elif self.left_down and self.dragging:
             if self.label_moved is not None:
                 self.move_selection(object_to_move=self.label_moved)
             elif self.selection is not None:
@@ -871,13 +905,17 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         super(MoveAndSelectStrategy, self).on_left_up(event)
         if self.label_moved is not None:
             self.label_moved = None
-        elif self.choosing_rect_left is not None and self.choosing_rect_right:
-            selected = self.update_selected(event.AltDown(), return_selection=True)
-            if event.AltDown():
-                self.remove_from_selection(*selected)
+        elif self.choosing_rect_left is not None:
+            if self.choosing_rect_right is None:
+                self.choosing_rect_left = None
             else:
-                self.add_to_selection(*selected)
-            self.choosing_rect_left = None
+                selected = self.update_selected(event.AltDown(), return_selection=True)
+                if event.AltDown():
+                    self.remove_from_selection(*selected)
+                else:
+                    self.add_to_selection(*selected)
+                self.choosing_rect_left = None
+                self.choosing_rect_right = None
             self.panel.Refresh()
         elif not self.object_moved and self.obj_under_mouse in self.selection:
             if not event.ControlDown():
@@ -928,6 +966,7 @@ class PetriPanel(wx.Panel):
         self.Bind(wx.EVT_LEFT_DCLICK, self.on_left_button_dclick)
         self.Bind(wx.EVT_RIGHT_DOWN, self.on_right_button_down)
         self.Bind(wx.EVT_RIGHT_UP, self.on_right_button_up)
+        self.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
         self.size = 0, 0
         self.mouse_x = self.mouse_y = 0
         
@@ -941,12 +980,6 @@ class PetriPanel(wx.Panel):
                 p1 -> t3 -> p4
                 p3 p4 -> t4 -> p2
             """)
-            self.petri = GUIPetriNet.from_string("""
-                # p1::1
-                p1 -> t2 ->
-                p2 -> t3 ->
-            """)
-            
             
         #self.strategy = MoveAndSelectStrategy(self)
         #self.strategy = SimulateStrategy(self)
@@ -997,6 +1030,7 @@ class PetriPanel(wx.Panel):
         self.mouse_in = True
         self.on_lbutton_timer()
         self.strategy.on_left_down(event)
+        self.SetFocus()
         
     def on_right_button_down(self, event):
         self.strategy.on_right_down(event)
@@ -1006,6 +1040,10 @@ class PetriPanel(wx.Panel):
         
     def on_left_button_dclick(self, event):
         self.strategy.on_left_dclick(event)
+        self.SetFocus()
+        
+    def on_key_press(self, event):
+        self.strategy.on_key_down(event)
         
     def on_lbutton_timer(self, *args, **kwargs):
         x, y, w, h = self.GetScreenRect()

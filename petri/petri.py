@@ -2,6 +2,7 @@
 
 import json
 from serializable import Serializable, RequiredException
+from timeit import itertools
 
     
 class Arc(Serializable):
@@ -33,6 +34,11 @@ class Arc(Serializable):
     
     def place_from_json_struct(self, place_obj, places_dct, **kwargs):
         return places_dct[place_obj]
+    
+    def delete(self):
+        print "DELETING"
+        self.transition.delete_arc(self)
+
     
 
 
@@ -79,6 +85,17 @@ class Transition(Serializable):
     @property
     def is_enabled(self):
         return all(arc.is_sufficient() for arc in self.input_arcs)
+    
+    def delete_arc(self, arc):
+        if arc.weight >= 0:
+            arc_set = self.input_arcs
+        else:
+            arc_set = self.output_arcs
+        arc_set.remove(arc)
+        self.arcs_cache = None
+        
+    def delete(self):
+        self.net.remove_transition(self.unique_id)
     
     def fire(self):
         """
@@ -138,6 +155,15 @@ class Place(Serializable):
     def add_tokens(self, tokens):
         assert(tokens>0)
         self.tokens += tokens    
+        
+    def delete(self):
+        self.net.remove_place(self.unique_id)
+        
+    def get_arcs(self):
+        for transition in self.net.get_transitions():
+            for arc in transition.get_arcs():
+                if arc.place == self:
+                    yield arc
         
     def __repr__(self):
         return "%s(%r,%r)" % (self.__class__.__name__, self.tokens,self.unique_id)
