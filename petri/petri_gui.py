@@ -484,7 +484,7 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         dia = ElementPropertiesDialog(parent, -1, 'Arc properties', obj=self, fields=fields)
         dia.ShowModal()
         dia.Destroy()      
-        
+         
     def menu_insert_point(self, event):
         x,y = self.menu_event.GetPositionTuple()
         ind, (a,b) = self.get_segment_nearest_to_point(x, y, self.line_pen.GetWidth())
@@ -495,7 +495,7 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         self.points.insert(ind, arc_point)
         
     def get_depending_objects(self):
-        return []
+        return [] #wow
     
 
             
