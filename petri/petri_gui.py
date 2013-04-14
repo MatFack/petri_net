@@ -176,9 +176,9 @@ class ObjectLabel(SelectionMixin, serializable.Serializable):
         obj_x, obj_y = self.obj.get_position()
         self.draw_text(dc, text, obj_x + self.diff_x, obj_y + self.diff_y)
         
-    def draw_text(self, dc, text, left_x, top_y):
+    def draw_text(self, dc, text, right_x, bottom_y):
         tw, th = dc.GetTextExtent(text)
-        x1, y1 = left_x-tw, top_y-th
+        x1, y1 = right_x-tw, bottom_y-th
         x2, y2 = x1 + tw, y1 + th
         self.rectangle = (x1, y1, x2, y2)
         dc.DrawText(text,  x1, y1)
@@ -197,6 +197,22 @@ class ObjectLabel(SelectionMixin, serializable.Serializable):
     def move_diff(self, diff_x, diff_y):
         self.diff_x = self.memo_diff_x + diff_x
         self.diff_y = self.memo_diff_y + diff_y
+        
+    def open_properties_dialog(self, panel):
+        self.obj.open_properties_dialog(panel)
+        
+class MenuMixin(object):
+    def spawn_context_menu(self, parent, event):
+        self.menu_event = event
+        menu = wx.Menu()
+        for event_id, (name, handler) in self.menu_fields.iteritems():
+            menu.Append(event_id, name)
+            parent.Bind(wx.EVT_MENU, handler, id=event_id)
+        parent.PopupMenu(menu, event.GetPositionTuple())
+        menu.Destroy()
+        for event_id, (name, handler) in self.menu_fields.iteritems():
+            parent.Unbind(wx.EVT_MENU, id=event_id)
+        parent.Refresh()
 
 class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
     pos_x_to_serialize = True
@@ -211,6 +227,8 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         super(GUIPlace, self).__init__(net=net, unique_id=unique_id, tokens=tokens)
         self.radius = 14
         self.label = ObjectLabel(self, -self.radius, -self.radius)
+        if position:
+            self.set_position(*position)
            
     def label_to_json_struct(self):
         return self.label.to_json_struct()
@@ -297,7 +315,7 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         for arc in self.get_arcs():
             yield arc
         
-class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a stub
+class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixin is just a stub
     
     INSERT_POINT = wx.NewId()
     REMOVE_POINT = wx.NewId()
@@ -315,7 +333,6 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         #
         self.menu_fields = OrderedDict()
         self.menu_fields[GUIArc.INSERT_POINT] = ('Insert point', self.menu_insert_point)
-        self.menu_fields[GUIArc.REMOVE_POINT] = ('Remove point', self.menu_remove_point)
         
     def points_to_json_struct(self):
         return [point.to_json_struct() for point in self.points]
@@ -327,11 +344,22 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
             points.append(arc_point)
         return points
         
+    def add_point(self, point_coords):
+        point = ArcPoint(self)
+        point.set_position(*point_coords)
+        self.points.append(point)
+        
+    def remove_point(self, point):
+        if point.is_selected:
+            self.points_selected -= 1
+            print self.points_selected
+        self.points.remove(point)
+        
     def select_line_pen(self, dc):
         if self.is_selected:
             dc.SetPen(self.line_selected_pen)
         else:
-            dc.SetPen(self.line_pen)
+            dc.SetPen(self.line_pen)        
             
     def draw(self, dc):
         self.select_line_pen(dc)
@@ -398,6 +426,7 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
             next_obj = self.points[index] if self.points else self.transition
         elif obj==self.transition:
             next_obj = self.points[-1-index] if self.points else self.place
+        
         return next_obj.get_position()
         
     def contains_point(self, x, y):
@@ -455,30 +484,15 @@ class GUIArc(SelectionMixin, PositionMixin, petri.Arc): #PositionMixin is just a
         dia = ElementPropertiesDialog(parent, -1, 'Arc properties', obj=self, fields=fields)
         dia.ShowModal()
         dia.Destroy()      
-  
-    def spawn_context_menu(self, parent, event):
-        self.menu_event = event
-        menu = wx.Menu()
-        for event_id, (name, handler) in self.menu_fields.iteritems():
-            menu.Append(event_id, name)
-            parent.Bind(wx.EVT_MENU, handler, id=event_id)
-        parent.PopupMenu(menu, event.GetPositionTuple())
-        menu.Destroy()
-        for event_id, (name, handler) in self.menu_fields.iteritems():
-            parent.Unbind(wx.EVT_MENU, id=event_id)
-        parent.Refresh()
         
     def menu_insert_point(self, event):
         x,y = self.menu_event.GetPositionTuple()
         ind, (a,b) = self.get_segment_nearest_to_point(x, y, self.line_pen.GetWidth())
         arc_point = ArcPoint(self)
         arc_point.set_position(x, y)
+        arc_point.set_selected(True)
+        self.points_selected+=1 
         self.points.insert(ind, arc_point)
-        
-
-    def menu_remove_point(self, event):
-        #remove me later, just for test
-        print "HI", self
         
     def get_depending_objects(self):
         return []
@@ -505,10 +519,13 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
         previous = self.is_selected
         super(ArcPoint, self).set_selected(selected)
         new = self.is_selected
+        print new, previous
         if new and not previous:
             self.arc.points_selected+=1
         elif previous and not new:
             self.arc.points_selected -=1
+            if self.arc.points_selected<0:
+                print '\n'.join(traceback.format_stack())
         
     def contains_point(self, x, y):
         r_x,r_y,r_w,r_h = self.get_rectangle()
@@ -519,6 +536,7 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
         return rectangles_intersect((x, y, x+w, y+h), (lx, ly, tx, ty))
     
     def draw(self, dc):
+        print self.arc.points_selected
         if not self.arc.points_selected and not self.arc.is_selected:
             return 
         x, y, w, h = self.get_rectangle()
@@ -529,11 +547,14 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawRectangle(x, y, w, h)
         
+    def delete(self):
+        self.arc.remove_point(self)
+        
     def get_depending_objects(self):
         return []
         
         
-class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
+class GUITransition(PositionMixin, SelectionMixin, MenuMixin, petri.Transition):
     ARC_CLS = GUIArc
     
     pos_x_to_serialize = True
@@ -547,13 +568,18 @@ class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
         self.width_coef = 0.9
         self.height_coef = 0.5
         self._width = self._height = 0
-        self.width = 50
-        self.height = 20
+        self.width = 15
+        self.height = 40
         
         self.side_slots = []
         self.main_angle = 90
         self.directions = [(1, 0), (0, 1), (-1, 0), (0, -1), ]
-        self.label = ObjectLabel(self, 0, -10)
+        self.label = ObjectLabel(self, -self.width/2, -self.height/2)
+        self.temporary_arc = None
+        # Menu
+        self.menu_fields = OrderedDict()
+        self.menu_fields[GUIArc.INSERT_POINT] = ('Rotate', self.menu_rotate)
+        
         
     def label_to_json_struct(self):
         return self.label.to_json_struct()
@@ -588,6 +614,9 @@ class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
         
     def rotate(self):
         self.width, self.height = self.height, self.width
+        
+    def set_temporary_arc(self, arc):
+        self.temporary_arc = arc
         
     def draw(self, dc):
         self.precalculate_arcs()
@@ -646,11 +675,14 @@ class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
         b = angle > self.main_angle
         return a*2+b
         
+    def get_temporary_arc_iter(self):
+        if self.temporary_arc is not None:
+            yield self.temporary_arc
     
     def precalculate_arcs(self):
-        """Precalculates the position of arcs' ends so that they are places as free as possible"""
+        """Precalculates the position of arcs' ends so that they are placed as free as possible"""
         side_slots = [[] for i in xrange(4)]
-        for arc in itertools.chain(self.input_arcs, self.output_arcs):
+        for arc in itertools.chain(self.input_arcs, self.output_arcs, self.get_temporary_arc_iter()):
             point = arc.get_point_next_to(self)
             p_trans = vec2d.Vec2d(self.get_position())
             p_place = vec2d.Vec2d(point) - p_trans
@@ -683,6 +715,10 @@ class GUITransition(PositionMixin, SelectionMixin, petri.Transition):
     def update_unique_id(self, value):
         self.net.rename_transition(from_name=self.unique_id, to_name=value)
         
+    def menu_rotate(self, event):
+        self.rotate()
+        
+        
     def get_depending_objects(self):
         return []
         
@@ -701,6 +737,19 @@ class GUIPetriNet(petri.PetriNet):
         transition = self.remove_transition(from_name)
         transition.unique_id = to_name
         self.add_transition(transition)
+        
+    def get_unique_place_name(self):
+        return self.get_unique_name('p%d', self.places)
+    
+    def get_unique_transition_name(self):
+        return self.get_unique_name('t%d', self.transitions)
+    
+    def get_unique_name(self, pattern, dct):
+        i = 0
+        while True:
+            i += 1
+            if pattern%i not in dct:
+                return pattern%i
 
     
 
@@ -710,6 +759,7 @@ class Strategy(object):
         self.left_down = False
         self.right_down = False
         self.mouse_x, self.mouse_y = 0, 0
+        self.need_capture_mouse = False
         
         
     @property
@@ -747,7 +797,7 @@ class Strategy(object):
     def draw(self, dc):
         pass
     
-    def on_switched(self):
+    def on_switched_strategy(self):
         pass
         
 class PropertiesMixin(object):
@@ -771,6 +821,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         self.dragging = False
         self.obj_under_mouse = None
         self.label_moved = None
+        self.need_capture_mouse = True
         
     def on_key_down(self, event):
         keycode = event.GetKeyCode()
@@ -789,13 +840,14 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         
     def on_left_down(self, event):
         super(MoveAndSelectStrategy, self).on_left_down(event)
-        print [self.choosing_rect_left]
         obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
         if isinstance(obj, ObjectLabel):
             self.label_moved = obj
             self.start_dragging()
             self.panel.Refresh()
             return
+        #if obj is not None and obj.is_selected:
+        #    self.add_to_selection(obj)
         if not (event.ControlDown() or event.AltDown()):
             if obj not in self.selection:
                 self.discard_selection()
@@ -811,7 +863,6 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         else:
             self.add_to_selection(obj)  
             self.start_dragging()
-        print "END",[self.choosing_rect_left]
         self.panel.Refresh()
         
     def on_right_down(self, event):
@@ -847,7 +898,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         else:
             object_to_move.move_diff(diff_x, diff_y)
             
-    def on_switched(self):
+    def on_switched_strategy(self):
         self.discard_selection()
         self.panel.Refresh()
         
@@ -951,8 +1002,141 @@ class SimulateStrategy(Strategy):
                 obj.fire()
                 self.panel.Refresh()
                 print self.panel.petri.get_state()
+                
+class AddPlaceStrategy(Strategy):
+    def __init__(self, panel):
+        super(AddPlaceStrategy, self).__init__(panel=panel)
+        
+    def on_left_down(self, event):
+        super(AddPlaceStrategy, self).on_left_down(event)
+        obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+        if obj is not None:
+            return
+        net = self.panel.petri
+        unique_id = net.get_unique_place_name()
+        position = (self.mouse_x, self.mouse_y)
+        net.new_place(net=net, unique_id=unique_id, position=position)
+        self.panel.Refresh()
+        
+class AddTransitionStrategy(Strategy):
+    def __init__(self, panel):
+        super(AddTransitionStrategy, self).__init__(panel=panel)
+        
+    def on_left_down(self, event):
+        super(AddTransitionStrategy, self).on_left_down(event)
+        obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+        if obj is not None:
+            return
+        net = self.panel.petri
+        unique_id = net.get_unique_transition_name()
+        position = (self.mouse_x, self.mouse_y)
+        net.new_transition(net=net, unique_id=unique_id, position=position)
+        self.panel.Refresh()
+        
+class MouseObj(object):
+    def __init__(self, panel, x, y):
+        self.panel = panel
+        self.x, self.y = x, y
+        self.proxy_obj = None
+        
+    def set_position(self, x, y):
+        self.x, self.y = x, y
     
+    def get_position(self):
+        if self.proxy_obj is not None:
+            return self.proxy_obj.get_position()
+        return self.x, self.y
     
+    def get_begin(self, obj):
+        if self.proxy_obj is not None:
+            return self.proxy_obj.get_begin(obj)
+        return self.get_position()
+    
+    def __eq__(self, other):
+        return self.proxy_obj==other
+    
+    get_end = get_begin
+        
+class AddArcStrategy(Strategy):
+    def __init__(self, panel):
+        super(AddArcStrategy, self).__init__(panel=panel)
+        self.arc = None
+        self.mouse_obj = None
+        self.needed_class = None
+        
+    def on_left_down(self, event):
+        super(AddArcStrategy, self).on_left_down(event)
+        obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+        if self.arc is None:
+            self.create_new_arc(obj)
+        else:
+            if obj is None:
+                self.arc.add_point((self.mouse_x, self.mouse_y))
+            elif isinstance(obj, self.needed_class):
+                transition = self.arc.transition
+                place = self.arc.place
+                if self.needed_class == petri.Transition:
+                    transition = obj
+                elif self.needed_class == petri.Place:
+                    place = obj
+                if self.arc.can_append(place=place, transition=transition):
+                    self.arc.transition = transition
+                    self.arc.place = place
+                    self.arc.inject()
+                    self.reset()
+        self.panel.Refresh()
+        
+    def reset(self):
+        if self.arc is not None:
+            if isinstance(self.arc.transition, MouseObj):
+                transition = self.arc.transition.proxy_obj
+            else:
+                transition = self.arc.transition
+            if transition:
+                transition.set_temporary_arc(None)
+            self.arc = None
+            self.mouse_obj = None
+            self.needed_class = None
+        
+    def create_new_arc(self, obj_clicked):
+        self.mouse_obj = MouseObj(self.panel, self.mouse_x, self.mouse_y)
+        if isinstance(obj_clicked, petri.Transition):
+            self.arc = GUIArc(self.panel.petri, self.mouse_obj, obj_clicked, -1)
+            obj_clicked.set_temporary_arc(self.arc)
+            self.needed_class = petri.Place
+        elif isinstance(obj_clicked, petri.Place):
+            self.arc = GUIArc(self.panel.petri, obj_clicked, self.mouse_obj, 1)
+            self.needed_class = petri.Transition
+        else:
+            self.needed_class = None
+            
+    def on_motion(self, event):
+        super(AddArcStrategy, self).on_motion(event)
+        if self.arc is not None and self.mouse_obj is not None:
+            self.mouse_obj.set_position(self.mouse_x, self.mouse_y)
+            obj_under_mouse = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+            prev_obj = self.mouse_obj.proxy_obj
+            self.mouse_obj.proxy_obj = obj_under_mouse
+            if prev_obj != obj_under_mouse and prev_obj and isinstance(prev_obj, petri.Transition):
+                prev_obj.set_temporary_arc(None)
+            if isinstance(obj_under_mouse, self.needed_class):
+                if isinstance(obj_under_mouse, petri.Transition):
+                    obj_under_mouse.set_temporary_arc(self.arc)
+            else:
+                self.mouse_obj.proxy_obj = None
+            self.panel.Refresh()
+
+    def draw(self, dc):
+        if self.arc is not None:
+            self.arc.draw(dc)
+            
+    def on_switched_strategy(self):
+        super(AddArcStrategy, self).on_switched_strategy()
+        self.reset()
+        self.panel.Refresh()
+        
+    
+            
 
 class PetriPanel(wx.Panel):
     def __init__(self, *args, **kwargs):
@@ -1027,8 +1211,9 @@ class PetriPanel(wx.Panel):
         self.draw(dc, w, h)
         
     def on_left_button_down(self, event):
-        self.mouse_in = True
-        self.on_lbutton_timer()
+        if self.strategy.need_capture_mouse:
+            self.mouse_in = True
+            self.on_lbutton_timer()
         self.strategy.on_left_down(event)
         self.SetFocus()
         
@@ -1126,11 +1311,17 @@ class Example(wx.Frame):
         
         bmp_mouse = wx.Bitmap("icons/arrow.png", wx.BITMAP_TYPE_ANY)
         bmp_animate = wx.Bitmap("icons/animate.png", wx.BITMAP_TYPE_ANY)
+        bmp_newplace = wx.Bitmap("icons/addplace.png", wx.BITMAP_TYPE_ANY)
+        bmp_newtransition = wx.Bitmap("icons/addtransition.png", wx.BITMAP_TYPE_ANY)
+        bmp_newarc = wx.Bitmap("icons/addarc.png", wx.BITMAP_TYPE_ANY)
         
         mouse_button = buttons.GenBitmapToggleButton(self, bitmap=bmp_mouse)
         
         self.buttons = [(mouse_button, MoveAndSelectStrategy(self.panel_getter)),
                          (buttons.GenBitmapToggleButton(self, bitmap=bmp_animate), SimulateStrategy(self.panel_getter)),
+                         (buttons.GenBitmapToggleButton(self, bitmap=bmp_newplace), AddPlaceStrategy(self.panel_getter)),
+                         (buttons.GenBitmapToggleButton(self, bitmap=bmp_newtransition), AddTransitionStrategy(self.panel_getter)),
+                         (buttons.GenBitmapToggleButton(self, bitmap=bmp_newarc), AddArcStrategy(self.panel_getter)),
                          ]
         
         for button,_ in self.buttons:
@@ -1170,7 +1361,7 @@ class Example(wx.Frame):
         for button in self.buttons:
             if button != button_on:
                 button.SetValue(False)
-        self.strategy.on_switched()
+        self.strategy.on_switched_strategy()
         self.strategy = self.buttons[button_on]
         
 

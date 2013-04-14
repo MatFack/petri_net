@@ -39,6 +39,24 @@ class Arc(Serializable):
         print "DELETING"
         self.transition.delete_arc(self)
 
+    @property
+    def is_input_arc(self):
+        return self.weight>0
+    
+    def can_append(self, place=None, transition=None):
+        place = place or self.place
+        transition = transition or self.transition
+        if self.is_input_arc:
+            arcs_set = transition.input_arcs
+        else:
+            arcs_set = transition.output_arcs
+        for arc in arcs_set:
+            if arc.place == place:
+                return False
+        return True
+    
+    def inject(self):
+        self.transition.add_arc(self)
     
 
 
@@ -86,8 +104,16 @@ class Transition(Serializable):
     def is_enabled(self):
         return all(arc.is_sufficient() for arc in self.input_arcs)
     
+    def add_arc(self, arc):
+        if arc.is_input_arc:
+            arc_set = self.input_arcs
+        else:
+            arc_set = self.output_arcs
+        arc_set.add(arc)
+        self.arcs_cache = None
+    
     def delete_arc(self, arc):
-        if arc.weight >= 0:
+        if arc.is_input_arc:
             arc_set = self.input_arcs
         else:
             arc_set = self.output_arcs
