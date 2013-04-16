@@ -16,9 +16,13 @@ from collections import OrderedDict
 
 
 
-
 if __name__ == '__main__':
     app = wx.App(False)
+
+VSCROLL_X = wx.SystemSettings_GetMetric(wx.SYS_VSCROLL_X)
+HSCROLL_Y = wx.SystemSettings_GetMetric(wx.SYS_HSCROLL_Y)
+
+RIGHT_OFFSET = BOTTOM_OFFSET = 50
 
 BLUE_PEN = wx.Pen('BLUE', 1)
 
@@ -127,8 +131,16 @@ class PositionMixin(object):
         super(PositionMixin, self).__init__(*args, **kwargs)
         
     def set_position(self, x, y):
+        x, y = self.correct_to_grid(x, y)
         self.pos_x = x # - (x%7)
         self.pos_y = y # - (y%7) # lol grid
+        
+    def get_size(self):
+        return (0, 0)
+
+    def correct_to_grid(self, x, y):
+        w,h = self.get_size()
+        return max(x, w), max(y, h)
         
     def get_position(self):
         return self.pos_x, self.pos_y
@@ -161,7 +173,7 @@ class SelectionMixin(object):
         self.selected = selected
         
 
-class ObjectLabel(SelectionMixin, serializable.Serializable):
+class ObjectLabel(SelectionMixin, PositionMixin, serializable.Serializable):
     diff_x_to_serialize = True
     diff_y_to_serialize = True
     
@@ -169,7 +181,7 @@ class ObjectLabel(SelectionMixin, serializable.Serializable):
         self.obj = obj
         self.diff_x = x
         self.diff_y = y
-        self.rectangle = None
+        self.rectangle = (0, 0, 0, 0)
         
     def draw(self, dc):
         text = str(self.obj.unique_id)
@@ -179,9 +191,18 @@ class ObjectLabel(SelectionMixin, serializable.Serializable):
     def draw_text(self, dc, text, right_x, bottom_y):
         tw, th = dc.GetTextExtent(text)
         x1, y1 = right_x-tw, bottom_y-th
+        x1, y1 = self.correct_to_grid(x1, y1)
         x2, y2 = x1 + tw, y1 + th
         self.rectangle = (x1, y1, x2, y2)
         dc.DrawText(text,  x1, y1)
+        
+    def get_size(self):
+        x1, y1, x2, y2 = self.rectangle
+        return (x2-x1)/2, (y2-y1)/2
+        
+    def get_position(self):
+        x1, y1, x2, y2 = self.rectangle
+        return (x1+x2)/2, (y1+y2)/2
         
     def contains_point(self, x, y):
         x1, y1, x2, y2 = self.rectangle
@@ -281,6 +302,9 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         bounding_rect = (self.pos_x-r, self.pos_y-r, self.pos_x+r, self.pos_y+r)
         return rectangles_intersect(bounding_rect, (lx, ly, tx, ty))
     
+    def get_size(self):
+        return self.radius, self.radius
+    
     def get_begin(self, arc):
         pos = vec2d.Vec2d(self.get_position())
         vec = vec2d.Vec2d(arc.get_point_next_to(self)) - pos
@@ -329,10 +353,18 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         self.line_selected_pen = wx.Pen("Blue", line_width)
         self.begin = self.end = None
         self.points = []
-        self.points_selected = 0
+        self.__points_selected = 0
         #
         self.menu_fields = OrderedDict()
         self.menu_fields[GUIArc.INSERT_POINT] = ('Insert point', self.menu_insert_point)
+        
+    def __get_points_selected(self):
+        return self.__points_selected
+    
+    def __set_points_selected(self, value):
+        self.__points_selected = max(value, 0)
+        
+    points_selected = property(fget=__get_points_selected, fset=__set_points_selected)
         
     def points_to_json_struct(self):
         return [point.to_json_struct() for point in self.points]
@@ -343,6 +375,9 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
             arc_point = ArcPoint.from_json_struct(point_obj, constructor_args=dict(arc=self))
             points.append(arc_point)
         return points
+    
+    def get_position(self): #just a stub
+        return self.place.get_position()
         
     def add_point(self, point_coords):
         point = ArcPoint(self)
@@ -352,7 +387,6 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
     def remove_point(self, point):
         if point.is_selected:
             self.points_selected -= 1
-            print self.points_selected
         self.points.remove(point)
         
     def select_line_pen(self, dc):
@@ -519,13 +553,10 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
         previous = self.is_selected
         super(ArcPoint, self).set_selected(selected)
         new = self.is_selected
-        print new, previous
         if new and not previous:
             self.arc.points_selected+=1
         elif previous and not new:
             self.arc.points_selected -=1
-            if self.arc.points_selected<0:
-                print '\n'.join(traceback.format_stack())
         
     def contains_point(self, x, y):
         r_x,r_y,r_w,r_h = self.get_rectangle()
@@ -536,7 +567,6 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
         return rectangles_intersect((x, y, x+w, y+h), (lx, ly, tx, ty))
     
     def draw(self, dc):
-        print self.arc.points_selected
         if not self.arc.points_selected and not self.arc.is_selected:
             return 
         x, y, w, h = self.get_rectangle()
@@ -546,6 +576,9 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
             dc.SetPen(wx.BLACK_PEN)
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawRectangle(x, y, w, h)
+        
+    def get_size(self):
+        return self.width/2, self.height/2
         
     def delete(self):
         self.arc.remove_point(self)
@@ -608,6 +641,9 @@ class GUITransition(PositionMixin, SelectionMixin, MenuMixin, petri.Transition):
     
     def __get_height(self):
         return self._height
+    
+    def get_size(self):
+        return self.width/2, self.height/2
     
     width = property(__get_width, __set_width)
     height = property(__get_height, __set_height)
@@ -760,6 +796,7 @@ class Strategy(object):
         self.right_down = False
         self.mouse_x, self.mouse_y = 0, 0
         self.need_capture_mouse = False
+        self.is_moving_objects = False
         
         
     @property
@@ -767,11 +804,13 @@ class Strategy(object):
         return self._panel()
         
     def set_mouse_coords(self, event):
-        self.mouse_x, self.mouse_y = event.m_x, event.m_y
+        x, y = max(event.m_x, 0), max(event.m_y, 0)
+        self.mouse_x, self.mouse_y = self.panel.screen_to_canvas_coordinates((x, y))
         
     def on_left_down(self, event):
         self.left_down = True
         self.set_mouse_coords(event)
+        print self.mouse_x, self.mouse_y
         
     def on_left_dclick(self, event):
         self.set_mouse_coords(event)
@@ -799,6 +838,7 @@ class Strategy(object):
     
     def on_switched_strategy(self):
         pass
+        
         
 class PropertiesMixin(object):
     def on_left_dclick(self, event):
@@ -890,13 +930,18 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             obj.set_selected(False)
         self.selection.difference_update(objects)
         
-    def move_selection(self, object_to_move=None):
-        diff_x, diff_y = self.mouse_x - self.drag_mouse_x, self.mouse_y - self.drag_mouse_y
+    def get_selection_objects(self, object_to_move):
         if object_to_move is None:
             for obj in self.selection:
-                obj.move_diff(diff_x, diff_y)
+                yield obj
         else:
-            object_to_move.move_diff(diff_x, diff_y)
+            yield object_to_move
+        
+    def move_selection(self, object_to_move=None):
+        diff_x, diff_y = self.mouse_x - self.drag_mouse_x, self.mouse_y - self.drag_mouse_y
+        for obj in self.get_selection_objects(object_to_move):
+            obj.move_diff(diff_x, diff_y)
+        self.panel.update_bounds()
             
     def on_switched_strategy(self):
         self.discard_selection()
@@ -975,6 +1020,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             self.panel.Refresh()
         if self.dragging:
             self.stop_dragging()
+        self.panel.update_bounds()
         self.panel.save_to_file('net.json', self.panel.petri)
               
     def start_dragging(self):
@@ -985,10 +1031,12 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             for obj in self.selection:
                 obj.prepare_to_move()
         self.dragging = True
+        self.is_moving_objects = True
         self.object_moved = False
         
     def stop_dragging(self):
         self.dragging = False
+        self.is_moving_objects = False
 
 class SimulateStrategy(Strategy):
     def __init__(self, panel):
@@ -1002,8 +1050,15 @@ class SimulateStrategy(Strategy):
                 obj.fire()
                 self.panel.Refresh()
                 print self.panel.petri.get_state()
+
+class MenuStrategyMixin(object):
+    def on_right_down(self, event):
+        super(MenuStrategyMixin, self).on_right_down(event)
+        obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
+        if obj is not None:
+            obj.spawn_context_menu(self.panel, event)
                 
-class AddPlaceStrategy(Strategy):
+class AddPlaceStrategy(MenuStrategyMixin, PropertiesMixin, Strategy):
     def __init__(self, panel):
         super(AddPlaceStrategy, self).__init__(panel=panel)
         
@@ -1018,7 +1073,9 @@ class AddPlaceStrategy(Strategy):
         net.new_place(net=net, unique_id=unique_id, position=position)
         self.panel.Refresh()
         
-class AddTransitionStrategy(Strategy):
+
+        
+class AddTransitionStrategy(MenuStrategyMixin, PropertiesMixin, Strategy):
     def __init__(self, panel):
         super(AddTransitionStrategy, self).__init__(panel=panel)
         
@@ -1057,7 +1114,7 @@ class MouseObj(object):
     
     get_end = get_begin
         
-class AddArcStrategy(Strategy):
+class AddArcStrategy(MenuStrategyMixin, PropertiesMixin, Strategy):
     def __init__(self, panel):
         super(AddArcStrategy, self).__init__(panel=panel)
         self.arc = None
@@ -1097,6 +1154,11 @@ class AddArcStrategy(Strategy):
             self.arc = None
             self.mouse_obj = None
             self.needed_class = None
+            
+    def on_right_down(self, event):
+        super(AddArcStrategy, self).on_right_down(event)
+        self.reset()
+        self.panel.Refresh()
         
     def create_new_arc(self, obj_clicked):
         self.mouse_obj = MouseObj(self.panel, self.mouse_x, self.mouse_y)
@@ -1136,23 +1198,39 @@ class AddArcStrategy(Strategy):
         self.panel.Refresh()
         
     
-            
+class SmartDC(wx.BufferedPaintDC):
+    def __init__(self, window, *args, **kwargs):
+        self.panel = window
+        super(SmartDC, self).__init__(window, *args, **kwargs)
+    
+    
+    def DrawRectangle(self, x, y, width, height, convert=True):
+        if convert:
+            x,y = self.panel.canvas_to_screen_coordinates((x,y))
+        return super(SmartDC, self).DrawRectangle(x, y, width, height)   
+    
+    def DrawLine(self, x1, y1, x2, y2):
+        x1, y1 = self.panel.canvas_to_screen_coordinates((x1, y1))
+        x2, y2 = self.panel.canvas_to_screen_coordinates((x2, y2))
+        return super(SmartDC, self).DrawLine(x1, y1, x2, y2)
+    
+    def DrawCircle(self, x, y, radius):
+        x, y = self.panel.canvas_to_screen_coordinates((x, y))
+        return super(SmartDC, self).DrawCircle(x, y, radius)
+    
+    def DrawText(self, text, x, y):
+        x, y = self.panel.canvas_to_screen_coordinates((x, y))
+        return super(SmartDC, self).DrawText(text, x, y)
 
-class PetriPanel(wx.Panel):
+class PetriPanel(wx.ScrolledWindow):
     def __init__(self, *args, **kwargs):
         super(PetriPanel, self).__init__(*args, **kwargs)
         self.SetDoubleBuffered(True)
-        self.Bind(wx.EVT_PAINT, self.on_paint_event)
-        self.Bind(wx.EVT_SIZE,  self.on_size_event)
-        self.Bind(wx.EVT_LEFT_DOWN, self.on_left_button_down)
-        self.Bind(wx.EVT_LEFT_UP, self.on_left_button_up)
-        self.Bind(wx.EVT_MOTION, self.on_mouse_motion)
-        self.Bind(wx.EVT_LEFT_DCLICK, self.on_left_button_dclick)
-        self.Bind(wx.EVT_RIGHT_DOWN, self.on_right_button_down)
-        self.Bind(wx.EVT_RIGHT_UP, self.on_right_button_up)
-        self.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
         self.size = 0, 0
         self.mouse_x = self.mouse_y = 0
+        
+        self.canvas_size = [1, 1] # w, h
+        self.view_point = [0, 0]  # x, y
         
         try:
             self.petri = self.load_from_file('net.json')
@@ -1164,7 +1242,18 @@ class PetriPanel(wx.Panel):
                 p1 -> t3 -> p4
                 p3 p4 -> t4 -> p2
             """)
-            
+        self.update_bounds()
+        
+        self.Bind(wx.EVT_PAINT, self.on_paint_event)
+        self.Bind(wx.EVT_SIZE,  self.on_size_event)
+        self.Bind(wx.EVT_LEFT_DOWN, self.on_left_button_down)
+        self.Bind(wx.EVT_LEFT_UP, self.on_left_button_up)
+        self.Bind(wx.EVT_MOTION, self.on_mouse_motion)
+        self.Bind(wx.EVT_LEFT_DCLICK, self.on_left_button_dclick)
+        self.Bind(wx.EVT_RIGHT_DOWN, self.on_right_button_down)
+        self.Bind(wx.EVT_RIGHT_UP, self.on_right_button_up)
+        self.Bind(wx.EVT_KEY_DOWN, self.on_key_press)
+        self.Bind(wx.EVT_SCROLLWIN, self.on_scroll)
         #self.strategy = MoveAndSelectStrategy(self)
         #self.strategy = SimulateStrategy(self)
         #self.petri.transitions['t1'].set_horizontal(True)
@@ -1183,8 +1272,6 @@ class PetriPanel(wx.Panel):
             if obj.in_rect(lx, ly, tx, ty):
                 yield obj
         
-            
-        
     def load_from_file(self, filepath):
         net = None
         with open(filepath, 'rb') as f:
@@ -1197,17 +1284,32 @@ class PetriPanel(wx.Panel):
         with open(filepath, 'wb') as f:
             json.dump(json_struct, f)
         
+    def on_scroll(self, event):
+        orientation = event.GetOrientation()
+        event.Skip()
+        wx.CallAfter(self.process_scroll_event, orientation)
+
+    def process_scroll_event(self, orientation):
+        if not self.strategy.is_moving_objects:
+            pos = self.GetScrollPos(orientation)
+            #print "POS",pos
+            rng = self.GetScrollRange(orientation) - self.GetScrollThumb(orientation)
+            ind = 1 if orientation == wx.VERTICAL else 0
+            new_vp = (float(pos) / rng) * (self.canvas_size[ind] - self.size[ind])
+            self.view_point[ind] = int(new_vp)
+            #print "VIEW POINT",self.view_point
         
     def on_size_event(self, event):
         self.size = event.GetSize()
+        self.update_bounds()
         self.Refresh()
         
     def on_paint_event(self, event):
-        dc = wx.BufferedPaintDC(self)
+        dc = SmartDC(self)
         w, h = self.size
         dc.SetPen(wx.WHITE_PEN)
         dc.SetBrush(wx.WHITE_BRUSH)
-        dc.DrawRectangle(0,0,w,h)
+        dc.DrawRectangle(0,0,w,h, convert=False)
         self.draw(dc, w, h)
         
     def on_left_button_down(self, event):
@@ -1232,6 +1334,8 @@ class PetriPanel(wx.Panel):
         
     def on_lbutton_timer(self, *args, **kwargs):
         x, y, w, h = self.GetScreenRect()
+        w -= VSCROLL_X
+        h -= HSCROLL_Y
         mx, my = wx.GetMousePosition()
         state = wx.GetMouseState()
         if not state.LeftDown():
@@ -1252,7 +1356,6 @@ class PetriPanel(wx.Panel):
         for obj in self.get_objects_reversed_iter():
             if obj.contains_point(x, y):
                 return obj
-
         
     def on_mouse_motion(self, event):
         self.strategy.on_motion(event)
@@ -1285,12 +1388,38 @@ class PetriPanel(wx.Panel):
         for place in reversed(self.petri.get_places()):
             yield place.label
             yield place
-        
-    def draw(self, dc, w, h):
-        if not self.petri:
+            
+    def update_bounds(self):
+        if self.strategy.is_moving_objects:
             return
+        max_x, max_y = 0, 0
+        for obj in self.get_objects_iter():
+            x,y = obj.get_position()
+            w,h = obj.get_size()
+            #print obj,x,y,w,h
+            max_x = max(max_x, x+w)
+            max_y = max(max_y, y+h)
+        max_x = max(max_x+RIGHT_OFFSET, self.size[0]-VSCROLL_X)
+        max_y = max(max_y+BOTTOM_OFFSET, self.size[1]-HSCROLL_Y)
+        self.canvas_size[0], self.canvas_size[1] = max_x, max_y
+        prev_x, prev_y = self.GetScrollPos(wx.HORIZONTAL), self.GetScrollPos(wx.VERTICAL)
+        self.SetScrollbars(1, 1, max_x, max_y)
+        self.Scroll(prev_x, prev_y)
+        self.process_scroll_event(wx.VERTICAL)
+        self.process_scroll_event(wx.HORIZONTAL)
+        
+    def screen_to_canvas_coordinates(self, point):
+        x, y = point
+        return (x+self.view_point[0], y+self.view_point[1])
+    
+    def canvas_to_screen_coordinates(self, point):
+        x, y = point
+        return (x-self.view_point[0], y-self.view_point[1])
+            
+    def draw(self, dc, w, h):
         for obj in self.get_objects_iter():
             obj.draw(dc)
+            
         self.strategy.draw(dc)
         
         """
