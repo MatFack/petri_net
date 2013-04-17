@@ -1,6 +1,19 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+
+# TODO: Commands history
+# TODO: Move command
+# TODO: Create command
+# TODO: Delete command
+# TODO: Copy - puts selected into Buffer
+# TODO: Cut - creates Delete command, puts selected into Buffer
+# TODO: Paste - creates Create command, puts there objects from Buffer
+
+# TODO: Tabs
+# TODO: Put properties somewhere, (menu - analysis - tabbed window)
+# TODO: Create menu (save, open, exit, export)
+
 import wx
 import traceback
 import time
@@ -40,9 +53,7 @@ def rectangles_intersect(rect1, rect2):
     """ Detects, whtether one rectangles intersects with another (including their square) """
     l1, t1, r1, b1 = rect1
     l2, t2, r2, b2 = rect2
-    #print rect1,rect2
     separate = r1 < l2 or l1 > r2 or t1>b2 or b1<t2
-    #print separate
     return not separate 
 
 
@@ -182,6 +193,9 @@ class ObjectLabel(SelectionMixin, PositionMixin, serializable.Serializable):
         self.diff_x = x
         self.diff_y = y
         self.rectangle = (0, 0, 0, 0)
+        self.rectangle_set = False
+        self.tw = self.th = 0
+        
         
     def draw(self, dc):
         text = str(self.obj.unique_id)
@@ -190,11 +204,25 @@ class ObjectLabel(SelectionMixin, PositionMixin, serializable.Serializable):
         
     def draw_text(self, dc, text, right_x, bottom_y):
         tw, th = dc.GetTextExtent(text)
+        if tw%2==1: tw+=1
+        if th%2==1: th+=1
+        self.tw, self.th = tw, th
         x1, y1 = right_x-tw, bottom_y-th
         x1, y1 = self.correct_to_grid(x1, y1)
         x2, y2 = x1 + tw, y1 + th
         self.rectangle = (x1, y1, x2, y2)
+        if not self.rectangle_set:
+            self.rectangle_set = True
+            
+            x1, y1 = self.correct_to_grid(x1, y1)
+            x2, y2 = x1 + tw, y1 + th
+            self.rectangle = (x1, y1, x2, y2)
         dc.DrawText(text,  x1, y1)
+        
+    def set_position(self, x, y):
+        obj_x, obj_y = self.obj.get_position()
+        print self.tw, self.th
+        self.diff_x, self.diff_y = x - obj_x + self.tw/2, y - obj_y + self.th/2
         
     def get_size(self):
         x1, y1, x2, y2 = self.rectangle
@@ -810,7 +838,6 @@ class Strategy(object):
     def on_left_down(self, event):
         self.left_down = True
         self.set_mouse_coords(event)
-        print self.mouse_x, self.mouse_y
         
     def on_left_dclick(self, event):
         self.set_mouse_coords(event)
@@ -882,7 +909,10 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         super(MoveAndSelectStrategy, self).on_left_down(event)
         obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
         if isinstance(obj, ObjectLabel):
-            self.label_moved = obj
+            if event.ControlDown():
+                self.label_moved = obj
+            else:
+                self.label_moved = obj.obj
             self.start_dragging()
             self.panel.Refresh()
             return
@@ -1012,24 +1042,25 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
                     self.add_to_selection(*selected)
                 self.choosing_rect_left = None
                 self.choosing_rect_right = None
-            self.panel.Refresh()
         elif not self.object_moved and self.obj_under_mouse in self.selection:
             if not event.ControlDown():
                 self.discard_selection()
             self.add_to_selection(self.obj_under_mouse)
-            self.panel.Refresh()
         if self.dragging:
             self.stop_dragging()
+        self.panel.Refresh()
         self.panel.update_bounds()
         self.panel.save_to_file('net.json', self.panel.petri)
               
     def start_dragging(self):
+        print '##################'
         self.drag_mouse_x, self.drag_mouse_y = self.mouse_x, self.mouse_y
-        if self.label_moved is not None:
-            self.label_moved.prepare_to_move()
-        else:
-            for obj in self.selection:
-                obj.prepare_to_move()
+        for obj in self.get_selection_objects(object_to_move=self.label_moved):
+            obj.prepare_to_move()
+            self.saved_position = obj.get_position()
+            print "Saved position",self.saved_position
+            self.saved_obj = obj
+            
         self.dragging = True
         self.is_moving_objects = True
         self.object_moved = False
@@ -1037,6 +1068,8 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
     def stop_dragging(self):
         self.dragging = False
         self.is_moving_objects = False
+        self.saved_obj.set_position(*self.saved_position)
+        print self.saved_position
 
 class SimulateStrategy(Strategy):
     def __init__(self, panel):
@@ -1292,12 +1325,10 @@ class PetriPanel(wx.ScrolledWindow):
     def process_scroll_event(self, orientation):
         if not self.strategy.is_moving_objects:
             pos = self.GetScrollPos(orientation)
-            #print "POS",pos
             rng = self.GetScrollRange(orientation) - self.GetScrollThumb(orientation)
             ind = 1 if orientation == wx.VERTICAL else 0
             new_vp = (float(pos) / rng) * (self.canvas_size[ind] - self.size[ind])
             self.view_point[ind] = int(new_vp)
-            #print "VIEW POINT",self.view_point
         
     def on_size_event(self, event):
         self.size = event.GetSize()
@@ -1396,7 +1427,6 @@ class PetriPanel(wx.ScrolledWindow):
         for obj in self.get_objects_iter():
             x,y = obj.get_position()
             w,h = obj.get_size()
-            #print obj,x,y,w,h
             max_x = max(max_x, x+w)
             max_y = max(max_y, y+h)
         max_x = max(max_x+RIGHT_OFFSET, self.size[0]-VSCROLL_X)
@@ -1511,6 +1541,6 @@ if __name__ == '__main__':
     p3 p4 -> t4 -> p2
     """,)
     
-    print net1.to_json_struct()
+    rint net1.to_json_struct()
     '''
     
