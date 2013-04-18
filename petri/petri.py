@@ -22,7 +22,7 @@ class Arc(Serializable):
     def is_sufficient(self):
         return self.place.tokens >= self.weight
     
-    def place_to_json_struct(self):
+    def place_to_json_struct(self, **kwargs):
         return self.place.unique_id
     
     def move_tokens(self):
@@ -35,9 +35,14 @@ class Arc(Serializable):
     def place_from_json_struct(self, place_obj, places_dct, **kwargs):
         return places_dct[place_obj]
     
+    def prepare_to_delete(self):
+        pass
+    
     def delete(self):
-        print "DELETING"
         self.transition.delete_arc(self)
+        
+    def restore(self):
+        self.transition.add_arc(self)
 
     @property
     def is_input_arc(self):
@@ -120,8 +125,14 @@ class Transition(Serializable):
         arc_set.remove(arc)
         self.arcs_cache = None
         
+    def prepare_to_delete(self):
+        pass
+        
     def delete(self):
         self.net.remove_transition(self.unique_id)
+        
+    def restore(self):
+        self.net.add_transition(self)
     
     def fire(self):
         """
@@ -135,11 +146,11 @@ class Transition(Serializable):
             
     # Serialization routines
             
-    def input_arcs_to_json_struct(self):
-        return [arc.to_json_struct() for arc in self.input_arcs]
+    def input_arcs_to_json_struct(self, only_arcs_with_places=None, **kwargs):
+        return [arc.to_json_struct() for arc in self.input_arcs if only_arcs_with_places is None or arc.place in only_arcs_with_places]
     
-    def output_arcs_to_json_struct(self):
-        return [arc.to_json_struct() for arc in self.output_arcs]
+    def output_arcs_to_json_struct(self, only_arcs_with_places=None, **kwargs):
+        return [arc.to_json_struct(**kwargs) for arc in self.output_arcs if only_arcs_with_places is None or arc.place in only_arcs_with_places]
     
     def input_arcs_from_json_struct(self, input_arcs_obj, places_dct, **kwargs):
         input_arcs = []
@@ -182,8 +193,14 @@ class Place(Serializable):
         assert(tokens>0)
         self.tokens += tokens    
         
+    def prepare_to_delete(self):
+        pass
+        
     def delete(self):
         self.net.remove_place(self.unique_id)
+        
+    def restore(self):
+        self.net.add_place(self)
         
     def get_arcs(self):
         for transition in self.net.get_transitions():
@@ -276,6 +293,7 @@ class PetriNet(Serializable):
         """
             Creates a place and immediately adds it to this petri net
         """
+        kwargs['net'] = self
         p = self.__class__.PLACE_CLS(*args, **kwargs)
         self.add_place(p)
         return p
@@ -289,11 +307,11 @@ class PetriNet(Serializable):
         self.add_transition(t)
         return t
         
-    def transitions_to_json_struct(self):
-        return [transition.to_json_struct() for transition in self.transitions.itervalues()]
+    def transitions_to_json_struct(self, **kwargs):
+        return [transition.to_json_struct(**kwargs) for transition in self.transitions.itervalues()]
         
-    def places_to_json_struct(self):
-        return [place.to_json_struct() for place in self.places.itervalues()]
+    def places_to_json_struct(self, **kwargs):
+        return [place.to_json_struct(**kwargs) for place in self.places.itervalues()]
     
     def places_from_json_struct(self, places_obj, **kwargs):
         places = {}

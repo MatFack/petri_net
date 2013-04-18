@@ -43,7 +43,7 @@ class MetaSerializable(type):
 class Serializable(object):
     __metaclass__ = MetaSerializable
     
-    def to_json_struct(self):
+    def to_json_struct(self, **kwargs):
         obj = {}
         fields_dct = getattr(self, self.__metaclass__.SERIALIZATION_FIELD)
         for field, functions in fields_dct.iteritems():
@@ -51,7 +51,7 @@ class Serializable(object):
             if serializer_field:
                 serializer = getattr(self, serializer_field)
                 try:
-                    value = serializer()
+                    value = serializer(**kwargs)
                 except DoNotSerialize:
                     continue
                 else:

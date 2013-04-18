@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 
 
-# TODO: Commands history
-# TODO: Move command
-# TODO: Create command
-# TODO: Delete command
-# TODO: Copy - puts selected into Buffer
+# DONE: Commands history
+# DONE: Move command
+# DONE: Create command
+# DONE: Delete command
+# TODO: Copy - puts selected into Buffer - this gonna be tough
 # TODO: Cut - creates Delete command, puts selected into Buffer
 # TODO: Paste - creates Create command, puts there objects from Buffer
 
@@ -25,8 +25,7 @@ import collections
 import wx.lib.buttons as buttons
 from petrigui.dialog_fields import DialogFields, place_ranged 
 import serializable
-from collections import OrderedDict
-
+from collections import OrderedDict, deque
 
 
 if __name__ == '__main__':
@@ -151,10 +150,17 @@ class PositionMixin(object):
 
     def correct_to_grid(self, x, y):
         w,h = self.get_size()
-        return max(x, w), max(y, h)
+        x -= x % 7
+        y -= y % 7
+        r_x, r_y = max(x, w), max(y, h)
+        return r_x, r_y
         
     def get_position(self):
         return self.pos_x, self.pos_y
+    
+    def shift(self, dx, dy):
+        x, y = self.get_position()
+        self.set_position(x+dx, y+dy)
     
     def prepare_to_move(self):
         self.memo_x, self.memo_y = self.pos_x, self.pos_y
@@ -199,24 +205,15 @@ class ObjectLabel(SelectionMixin, PositionMixin, serializable.Serializable):
         
     def draw(self, dc):
         text = str(self.obj.unique_id)
-        obj_x, obj_y = self.obj.get_position()
-        self.draw_text(dc, text, obj_x + self.diff_x, obj_y + self.diff_y)
+        self.draw_text(dc, text)
         
-    def draw_text(self, dc, text, right_x, bottom_y):
+    def draw_text(self, dc, text):
         tw, th = dc.GetTextExtent(text)
         if tw%2==1: tw+=1
         if th%2==1: th+=1
         self.tw, self.th = tw, th
-        x1, y1 = right_x-tw, bottom_y-th
-        x1, y1 = self.correct_to_grid(x1, y1)
-        x2, y2 = x1 + tw, y1 + th
-        self.rectangle = (x1, y1, x2, y2)
-        if not self.rectangle_set:
-            self.rectangle_set = True
-            
-            x1, y1 = self.correct_to_grid(x1, y1)
-            x2, y2 = x1 + tw, y1 + th
-            self.rectangle = (x1, y1, x2, y2)
+        self.recalculate_position()
+        x1,y1, _, _ = self.rectangle
         dc.DrawText(text,  x1, y1)
         
     def set_position(self, x, y):
@@ -227,6 +224,20 @@ class ObjectLabel(SelectionMixin, PositionMixin, serializable.Serializable):
     def get_size(self):
         x1, y1, x2, y2 = self.rectangle
         return (x2-x1)/2, (y2-y1)/2
+    
+    def recalculate_position(self):
+        obj_x, obj_y = self.obj.get_position()
+        right_x = obj_x + self.diff_x
+        bottom_y = obj_y + self.diff_y
+        x1, y1 = right_x-self.tw, bottom_y-self.th
+        x1, y1 = self.correct_to_grid(x1, y1)
+        x2, y2 = x1 + self.tw, y1 + self.th
+        self.rectangle = (x1, y1, x2, y2)
+        if not self.rectangle_set:
+            self.rectangle_set = True
+            x1, y1 = self.correct_to_grid(x1, y1)
+            x2, y2 = x1 + self.tw, y1 + self.th
+            self.rectangle = (x1, y1, x2, y2)
         
     def get_position(self):
         x1, y1, x2, y2 = self.rectangle
@@ -252,6 +263,7 @@ class ObjectLabel(SelectionMixin, PositionMixin, serializable.Serializable):
         
 class MenuMixin(object):
     def spawn_context_menu(self, parent, event):
+        self.menu_parent = parent
         self.menu_event = event
         menu = wx.Menu()
         for event_id, (name, handler) in self.menu_fields.iteritems():
@@ -279,8 +291,8 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         if position:
             self.set_position(*position)
            
-    def label_to_json_struct(self):
-        return self.label.to_json_struct()
+    def label_to_json_struct(self, **kwargs):
+        return self.label.to_json_struct(**kwargs)
     
     def label_from_json_struct(self, label_obj, **kwargs):
         return ObjectLabel.from_json_struct(label_obj, constructor_args=dict(obj=self), **kwargs)
@@ -394,8 +406,8 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         
     points_selected = property(fget=__get_points_selected, fset=__set_points_selected)
         
-    def points_to_json_struct(self):
-        return [point.to_json_struct() for point in self.points]
+    def points_to_json_struct(self, **kwargs):
+        return [point.to_json_struct(**kwargs) for point in self.points]
     
     def points_from_json_struct(self, points_obj, **kwargs):
         points = []
@@ -490,6 +502,11 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
             next_obj = self.points[-1-index] if self.points else self.place
         
         return next_obj.get_position()
+    
+    def set_point_at(self, point, index):
+        if index>=len(self.points):
+            self.points.extend([None]*(index-len(self.points)+1))
+        self.points[index] = point
         
     def contains_point(self, x, y):
         segment = self.get_segment_nearest_to_point(x, y, self.line_pen.GetWidth())
@@ -543,6 +560,7 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         fields = [ 
                    ('abs_weight', place_ranged('Weight', minimum=1))
                    ]
+        self.menu_parent = parent 
         dia = ElementPropertiesDialog(parent, -1, 'Arc properties', obj=self, fields=fields)
         dia.ShowModal()
         dia.Destroy()      
@@ -555,9 +573,11 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         arc_point.set_selected(True)
         self.points_selected+=1 
         self.points.insert(ind, arc_point)
+        command = CreateDeleteObjectCommand(self.menu_parent, arc_point)
+        self.menu_parent.append_command(command)
         
     def get_depending_objects(self):
-        return [] #wow
+        return []
     
 
             
@@ -607,10 +627,16 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
         
     def get_size(self):
         return self.width/2, self.height/2
+    
+    def prepare_to_delete(self):
+        self.index_in_arc = self.arc.points.index(self)
         
     def delete(self):
         self.arc.remove_point(self)
         
+    def restore(self):
+        self.arc.set_point_at(self, self.index_in_arc)
+            
     def get_depending_objects(self):
         return []
         
@@ -642,8 +668,8 @@ class GUITransition(PositionMixin, SelectionMixin, MenuMixin, petri.Transition):
         self.menu_fields[GUIArc.INSERT_POINT] = ('Rotate', self.menu_rotate)
         
         
-    def label_to_json_struct(self):
-        return self.label.to_json_struct()
+    def label_to_json_struct(self, **kwargs):
+        return self.label.to_json_struct(**kwargs)
     
     def label_from_json_struct(self, label_obj, **kwargs):
         return ObjectLabel.from_json_struct(label_obj, constructor_args=dict(obj=self), **kwargs)
@@ -825,6 +851,7 @@ class Strategy(object):
         self.mouse_x, self.mouse_y = 0, 0
         self.need_capture_mouse = False
         self.is_moving_objects = False
+        self.allow_undo_redo = True
         
         
     @property
@@ -832,7 +859,8 @@ class Strategy(object):
         return self._panel()
         
     def set_mouse_coords(self, event):
-        x, y = max(event.m_x, 0), max(event.m_y, 0)
+        #x, y = max(event.m_x, 0), max(event.m_y, 0)
+        x, y = event.m_x, event.m_y
         self.mouse_x, self.mouse_y = self.panel.screen_to_canvas_coordinates((x, y))
         
     def on_left_down(self, event):
@@ -889,20 +917,98 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         self.obj_under_mouse = None
         self.label_moved = None
         self.need_capture_mouse = True
+        self.move_command = None
         
     def on_key_down(self, event):
         keycode = event.GetKeyCode()
         if keycode == wx.WXK_DELETE:
             self.on_delete()
+        if event.ControlDown():
+            if keycode == ord('C'):
+                self.on_copy()
+            elif keycode == ord('X'):
+                self.on_cut()
+            elif keycode == ord('V'):
+                self.on_paste()
+            elif keycode == ord('A'):
+                for obj in self.panel.get_objects_iter():
+                    if not isinstance(obj, ObjectLabel):
+                        self.add_to_selection(obj)
+                self.panel.Refresh()
+                
+    def on_cut(self):
+        self.on_copy()
+        self.on_delete()
+                
+    def on_copy(self):
+        places_set = set()
+        places = deque()
+        transitions_objects = deque()
+        transitions = deque()
+        for obj in self.selection:
+            if isinstance(obj, petri.Place):
+                places.append((obj.__class__,obj.to_json_struct()))
+                places_set.add(obj)
+            elif isinstance(obj, petri.Transition):
+                transitions_objects.append(obj)
+        if not places_set and not transitions_objects:
+            return
+        for transition in transitions_objects:
+            transitions.append((transition.__class__, transition.to_json_struct(only_arcs_with_places=places_set)))
+        self.panel.buffer.set_content(places=places, transitions=transitions)
+        
+    def on_paste(self):
+        places, transitions = self.panel.buffer.get_content()
+        if not places and not transitions:
+            return
+        self.discard_selection()
+        command = CreateDeleteObjectCommand(self.panel)
+        places_objects = deque()
+        places_dct = {}
+        
+        net = self.panel.petri
+        for cls, place_obj in places:
+            place = cls.from_json_struct(place_obj, constructor_args=dict(net=net))
+            place_name = place.unique_id
+            k = 1
+            while place.unique_id in net.places:
+                place.unique_id = '%s (%d)'%(place_name, k)
+                k += 1
+            places_dct[place_name] = place
+            net.add_place(place)
+            self.add_to_selection(place)
+            place.shift(20,20)
+            command.add_object(place)
             
+        for cls, transition_obj in transitions:
+            transition = cls.from_json_struct(transition_obj, constructor_args=dict(net=net), places_dct=places_dct)
+            transition_name = transition.unique_id
+            k = 1
+            while transition.unique_id in net.transitions:
+                transition.unique_id = '%s (%d)'%(transition_name, k)
+                k += 1
+            net.add_transition(transition)
+            self.add_to_selection(transition)
+            for arc in itertools.chain(transition.input_arcs, transition.output_arcs):
+                for point in arc.points:
+                    self.add_to_selection(point)
+            transition.shift(20,20)
+            command.add_object(transition)
+        self.panel.append_command(command)
+        self.panel.Refresh()
+        
     def on_delete(self):
         net = self.panel.petri
         to_delete = set()
         for obj in self.selection:
             to_delete.add(obj)
             to_delete.update(obj.get_depending_objects())
+        command = CreateDeleteObjectCommand(self.panel, to_delete=True)
         for obj in to_delete:
-            obj.delete()
+            command.add_object(obj)
+        command.execute()
+        self.panel.append_command(command)
+        self.panel.update_bounds()
         self.panel.Refresh()
         
     def on_left_down(self, event):
@@ -1053,14 +1159,11 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         self.panel.save_to_file('net.json', self.panel.petri)
               
     def start_dragging(self):
-        print '##################'
         self.drag_mouse_x, self.drag_mouse_y = self.mouse_x, self.mouse_y
+        self.move_command = MoveCommand(self.panel)
         for obj in self.get_selection_objects(object_to_move=self.label_moved):
             obj.prepare_to_move()
-            self.saved_position = obj.get_position()
-            print "Saved position",self.saved_position
-            self.saved_obj = obj
-            
+            self.move_command.add_object(obj)
         self.dragging = True
         self.is_moving_objects = True
         self.object_moved = False
@@ -1068,12 +1171,14 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
     def stop_dragging(self):
         self.dragging = False
         self.is_moving_objects = False
-        self.saved_obj.set_position(*self.saved_position)
-        print self.saved_position
+        self.move_command.record_move()
+        self.panel.append_command(self.move_command)
+        self.move_command = None
 
 class SimulateStrategy(Strategy):
     def __init__(self, panel):
         super(SimulateStrategy, self).__init__(panel=panel)
+        self.allow_undo_redo = False
         
     def on_left_down(self, event):
         super(SimulateStrategy, self).on_left_down(event)
@@ -1103,7 +1208,9 @@ class AddPlaceStrategy(MenuStrategyMixin, PropertiesMixin, Strategy):
         net = self.panel.petri
         unique_id = net.get_unique_place_name()
         position = (self.mouse_x, self.mouse_y)
-        net.new_place(net=net, unique_id=unique_id, position=position)
+        place = net.new_place(unique_id=unique_id, position=position)
+        command = CreateDeleteObjectCommand(self.panel, place)
+        self.panel.append_command(command)
         self.panel.Refresh()
         
 
@@ -1120,7 +1227,9 @@ class AddTransitionStrategy(MenuStrategyMixin, PropertiesMixin, Strategy):
         net = self.panel.petri
         unique_id = net.get_unique_transition_name()
         position = (self.mouse_x, self.mouse_y)
-        net.new_transition(net=net, unique_id=unique_id, position=position)
+        trans = net.new_transition(unique_id=unique_id, position=position)
+        command = CreateDeleteObjectCommand(self.panel, trans)
+        self.panel.append_command(command)
         self.panel.Refresh()
         
 class MouseObj(object):
@@ -1173,6 +1282,8 @@ class AddArcStrategy(MenuStrategyMixin, PropertiesMixin, Strategy):
                     self.arc.transition = transition
                     self.arc.place = place
                     self.arc.inject()
+                    command = CreateDeleteObjectCommand(self.panel, self.arc)
+                    self.panel.append_command(command)
                     self.reset()
         self.panel.Refresh()
         
@@ -1255,12 +1366,146 @@ class SmartDC(wx.BufferedPaintDC):
         x, y = self.panel.canvas_to_screen_coordinates((x, y))
         return super(SmartDC, self).DrawText(text, x, y)
 
+class Command(object): # not just a command, but a command history itself
+    """
+       Command instance is always the first one
+       None <- Command() -> MoveCommand() -> DeleteCommand() -> None
+    """
+    def __init__(self):
+        super(Command, self).__init__()
+        self.__prev = None
+        self.__next = None
+        self.does_nothing = False # sometimes movecommand doens't do anything, so we just won't add commands that don't do anything
+        
+    def __get_next(self):
+        return self.__next
+        
+    def __set_next(self, next):
+        self.__next = next
+        
+    next = property(fget=__get_next, fset=__set_next)
+ 
+    def __get_prev(self):
+        return self.__prev
+        
+    def __set_prev(self, prev):
+        self.__prev = prev     
+        
+    prev = property(fget=__get_prev, fset=__set_prev)  
+        
+    def add_command(self, command):
+        self.next = command
+        self.next.prev = self
+        return command
+    
+    def has_prev(self):
+        return self.prev is not None
+    
+    def has_next(self):
+        return self.next is not None
+    
+    def __str__(self):
+        return '<Unnamed command>'
+
+    def go_prev(self):
+        if not self.has_prev():
+            return self
+        self.unexecute()
+        return self.prev
+    
+    def go_next(self):
+        if not self.has_next():
+            return self
+        self.next.execute()
+        return self.next
+
+    def execute(self):
+        raise NotImplementedError()
+    
+    def unexecute(self):
+        raise NotImplementedError()
+    
+class MoveCommand(Command):
+    def __init__(self, panel):
+        super(MoveCommand, self).__init__()
+        self.panel = panel
+        self.objects = deque()
+        
+    def __str__(self):
+        return 'Move %d object'%len(self.objects)
+        
+    def add_object(self, obj):
+        self.objects.append([obj, obj.get_position(), None])
+        
+    def record_move(self):
+        self.does_nothing = True
+        for lst in self.objects:
+            lst[-1] = lst[0].get_position()
+            if lst[1] != lst[2]:
+                self.does_nothing = False
+
+    def execute(self):
+        for obj, pos_before, pos_after in self.objects:
+            obj.set_position(*pos_after)
+        self.panel.update_bounds()
+        self.panel.Refresh()
+            
+    def unexecute(self):
+        for obj, pos_before, pos_after in self.objects:
+            obj.set_position(*pos_before)
+        self.panel.update_bounds()
+        self.panel.Refresh()
+        
+class CreateDeleteObjectCommand(Command):
+    """
+    Create command does not create anything, it just removes and deletes dependencies, leaving objects in memory
+    """
+    def __init__(self, panel, obj=None, to_delete=False):
+        super(CreateDeleteObjectCommand, self).__init__()
+        self.to_delete = to_delete
+        self.panel = panel
+        self.objects = deque()
+        if obj is not None:
+            self.objects.append(obj)
+        
+    def add_object(self, obj):
+        self.objects.append(obj)
+        
+    def execute(self):
+        if self.to_delete:
+            self._unexecute()
+        else:
+            self._execute()
+        
+    def unexecute(self):
+        if self.to_delete:
+            self._execute()
+        else:
+            self._unexecute()
+        
+    def _execute(self):
+        for obj in self.objects:
+            obj.restore()
+        self.panel.Refresh()
+        
+    def _unexecute(self):
+        for obj in self.objects:
+            obj.prepare_to_delete()
+        for obj in self.objects:
+            print obj
+            obj.delete()
+        self.panel.Refresh()
+        
+
 class PetriPanel(wx.ScrolledWindow):
-    def __init__(self, *args, **kwargs):
-        super(PetriPanel, self).__init__(*args, **kwargs)
+    def __init__(self, parent, buffer, **kwargs):
+        super(PetriPanel, self).__init__(parent, **kwargs)
+        self.buffer = buffer
         self.SetDoubleBuffered(True)
         self.size = 0, 0
         self.mouse_x = self.mouse_y = 0
+        self.first_time = True
+        self.commands = Command()
         
         self.canvas_size = [1, 1] # w, h
         self.view_point = [0, 0]  # x, y
@@ -1290,6 +1535,7 @@ class PetriPanel(wx.ScrolledWindow):
         #self.strategy = MoveAndSelectStrategy(self)
         #self.strategy = SimulateStrategy(self)
         #self.petri.transitions['t1'].set_horizontal(True)
+        
         
     @property
     def strategy(self):
@@ -1330,6 +1576,18 @@ class PetriPanel(wx.ScrolledWindow):
             new_vp = (float(pos) / rng) * (self.canvas_size[ind] - self.size[ind])
             self.view_point[ind] = int(new_vp)
         
+    def append_command(self, command):
+        if command.does_nothing:
+            print "DOES NOTHING"
+            return
+        self.commands = self.commands.add_command(command)
+        
+    def undo(self):
+        self.commands = self.commands.go_prev()
+        
+    def redo(self):
+        self.commands = self.commands.go_next()
+        
     def on_size_event(self, event):
         self.size = event.GetSize()
         self.update_bounds()
@@ -1342,6 +1600,12 @@ class PetriPanel(wx.ScrolledWindow):
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawRectangle(0,0,w,h, convert=False)
         self.draw(dc, w, h)
+        if self.first_time:
+            self.first_time = False
+            dc.SetPen(wx.WHITE_PEN)
+            dc.SetBrush(wx.WHITE_BRUSH)
+            dc.DrawRectangle(0,0,w,h, convert=False)
+            self.draw(dc, w, h)
         
     def on_left_button_down(self, event):
         if self.strategy.need_capture_mouse:
@@ -1362,6 +1626,15 @@ class PetriPanel(wx.ScrolledWindow):
         
     def on_key_press(self, event):
         self.strategy.on_key_down(event)
+        if not self.strategy.allow_undo_redo:
+            return
+        if event.ControlDown():
+            c = event.GetKeyCode()
+            if c == 90:  # ord('Z')
+                self.undo()
+            elif c== 89: # ord('Y')
+                self.redo()
+        
         
     def on_lbutton_timer(self, *args, **kwargs):
         x, y, w, h = self.GetScreenRect()
@@ -1425,13 +1698,17 @@ class PetriPanel(wx.ScrolledWindow):
             return
         max_x, max_y = 0, 0
         for obj in self.get_objects_iter():
+            if isinstance(obj, ObjectLabel):
+                obj.recalculate_position() #dirty hack
             x,y = obj.get_position()
+            print 'POS',x,y
             w,h = obj.get_size()
             max_x = max(max_x, x+w)
             max_y = max(max_y, y+h)
         max_x = max(max_x+RIGHT_OFFSET, self.size[0]-VSCROLL_X)
         max_y = max(max_y+BOTTOM_OFFSET, self.size[1]-HSCROLL_Y)
         self.canvas_size[0], self.canvas_size[1] = max_x, max_y
+        print self.canvas_size
         prev_x, prev_y = self.GetScrollPos(wx.HORIZONTAL), self.GetScrollPos(wx.VERTICAL)
         self.SetScrollbars(1, 1, max_x, max_y)
         self.Scroll(prev_x, prev_y)
@@ -1447,6 +1724,7 @@ class PetriPanel(wx.ScrolledWindow):
         return (x-self.view_point[0], y-self.view_point[1])
             
     def draw(self, dc, w, h):
+        
         for obj in self.get_objects_iter():
             obj.draw(dc)
             
@@ -1458,7 +1736,21 @@ class PetriPanel(wx.ScrolledWindow):
         if self.mouse_pos:
             dc.DrawLine(0, 0, self.mouse_pos[0], self.mouse_pos[1])"""
         
-       
+
+class Buffer(object):
+    def __init__(self):
+        self.places = None
+        self.transitions = None
+    
+    def set_content(self, places, transitions):
+        self.places = places
+        self.transitions = transitions
+        
+    def reset_content(self):
+        self.places = self.transitions = None
+        
+    def get_content(self):
+        return self.places, self.transitions
 
 class Example(wx.Frame):
     def __init__(self, parent, title):
@@ -1466,7 +1758,7 @@ class Example(wx.Frame):
             size=(500, 500))
         vert_sizer = wx.BoxSizer(wx.VERTICAL)
         buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        
+        self.buffer = Buffer()
         
         bmp_mouse = wx.Bitmap("icons/arrow.png", wx.BITMAP_TYPE_ANY)
         bmp_animate = wx.Bitmap("icons/animate.png", wx.BITMAP_TYPE_ANY)
@@ -1494,7 +1786,7 @@ class Example(wx.Frame):
         self.toggle_button(mouse_button)
             
         vert_sizer.Add(buttons_sizer)
-        self._petri_panel = PetriPanel(self)
+        self._petri_panel = PetriPanel(self, self.buffer)
         self.petri_panel.SetFocus()
         vert_sizer.Add(self.petri_panel, proportion=1, flag=wx.EXPAND)
         self.SetSizer(vert_sizer)
@@ -1522,6 +1814,7 @@ class Example(wx.Frame):
                 button.SetValue(False)
         self.strategy.on_switched_strategy()
         self.strategy = self.buttons[button_on]
+        self.petri_panel.SetFocus()
         
 
 
