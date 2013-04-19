@@ -3,7 +3,7 @@
 import wx
 
 def spin_control(parent, value, rng):
-    control = wx.SpinCtrl(parent)
+    control = wx.SpinCtrl(parent, style=wx.TE_PROCESS_ENTER)
     control.SetRange(*rng)
     control.SetValue(int(value))
     return control
@@ -22,4 +22,4 @@ def place_ranged(label, minimum=None, maximum=None):
         
 
 class DialogFields(object): 
-    unique_id = ('Name', lambda parent,value:wx.TextCtrl(parent, value=value), lambda control:str(control.GetValue()))
+    unique_id = ('Name', lambda parent,value:wx.TextCtrl(parent, value=value, style=wx.TE_PROCESS_ENTER), lambda control:str(control.GetValue()))
