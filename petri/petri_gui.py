@@ -7,6 +7,7 @@
 # DONE: Create command
 # DONE: Delete command
 # DONE: Copy - puts selected into Buffer - this gonna be tough
+# TODO: Make coordinates in buffer relative, prbbl lots of work
 # DONE: Cut - creates Delete command, puts selected into Buffer
 # DONE: Paste - creates Create command, puts there objects from Buffer
 
@@ -15,6 +16,7 @@
 # TODO: Create menu (save, open, exit, export)
 
 import wx
+import wx.aui
 import traceback
 import time
 import petri
@@ -26,6 +28,8 @@ import wx.lib.buttons as buttons
 from petrigui.dialog_fields import DialogFields, place_ranged 
 import serializable
 from collections import OrderedDict, deque
+import os
+import os.path as osp
 
 
 if __name__ == '__main__':
@@ -939,6 +943,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
         self.move_command = None
         
     def on_key_down(self, event):
+        print "HERE"
         keycode = event.GetKeyCode()
         if keycode == wx.WXK_DELETE:
             self.on_delete()
@@ -1182,7 +1187,7 @@ class MoveAndSelectStrategy(PropertiesMixin, Strategy):
             self.stop_dragging()
         self.panel.Refresh()
         self.panel.update_bounds()
-        self.panel.save_to_file('net.json', self.panel.petri)
+        #self.panel.save_to_file('net.json', self.panel.petri)
               
     def start_dragging(self):
         self.drag_mouse_x, self.drag_mouse_y = self.mouse_x, self.mouse_y
@@ -1531,19 +1536,22 @@ class CreateDeleteObjectCommand(Command):
         
 
 class PetriPanel(wx.ScrolledWindow):
-    def __init__(self, parent, strategy_getter, clip_buffer, **kwargs):
+    def __init__(self, parent, frame, strategy_getter, clip_buffer, **kwargs):
         super(PetriPanel, self).__init__(parent, **kwargs)
         self.clip_buffer = clip_buffer
         self.strategy_getter = strategy_getter
+        self.frame = frame
         self.SetDoubleBuffered(True)
         self.size = 0, 0
         self.mouse_x = self.mouse_y = 0
         self.first_time = True
         self.commands = Command()
-        
+        self.saved_command = self.commands
         self.canvas_size = [1, 1] # w, h
         self.view_point = [0, 0]  # x, y
-        
+        self.petri = GUIPetriNet()
+        self.filepath = None
+        '''
         try:
             self.petri = self.load_from_file('net.json')
         except:
@@ -1554,6 +1562,7 @@ class PetriPanel(wx.ScrolledWindow):
                 p1 -> t3 -> p4
                 p3 p4 -> t4 -> p2
             """)
+        '''
         self.update_bounds()
         
         self.Bind(wx.EVT_PAINT, self.on_paint_event)
@@ -1564,7 +1573,7 @@ class PetriPanel(wx.ScrolledWindow):
         self.Bind(wx.EVT_LEFT_DCLICK, self.on_left_button_dclick)
         self.Bind(wx.EVT_RIGHT_DOWN, self.on_right_button_down)
         self.Bind(wx.EVT_RIGHT_UP, self.on_right_button_up)
-        #self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
+        self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
         self.Bind(wx.EVT_SCROLLWIN, self.on_scroll)
         #self.strategy = MoveAndSelectStrategy(self)
         #self.strategy = SimulateStrategy(self)
@@ -1574,6 +1583,10 @@ class PetriPanel(wx.ScrolledWindow):
     @property
     def strategy(self):
         return self.strategy_getter()
+    
+    @property
+    def is_changed(self):
+        return self.commands is not self.saved_command
         
     def GetObjectsInRect(self, lx, ly, tx, ty): #ignore labels
         if not self.petri:
@@ -1585,17 +1598,33 @@ class PetriPanel(wx.ScrolledWindow):
             if obj.in_rect(lx, ly, tx, ty):
                 yield obj
         
+    def get_name(self):
+        result = self.GetName()
+        if self.is_changed:
+            result = '*'+result
+        return result
+        
     def load_from_file(self, filepath):
         net = None
         with open(filepath, 'rb') as f:
             json_struct = json.load(f)
         net = GUIPetriNet.from_json_struct(json_struct)
-        return net
+        self.update_title(filepath)
+        self.filepath = filepath
+        self.petri = net
+    
+    def update_title(self, filepath):
+        basename = osp.basename(filepath)
+        title = osp.splitext(basename)[0]
+        self.SetName(title)
         
     def save_to_file(self, filepath, net):
+        self.update_title(filepath)
         json_struct = net.to_json_struct()
         with open(filepath, 'wb') as f:
             json.dump(json_struct, f)
+        self.filepath = filepath
+        self.saved_command = self.commands
         
     def on_scroll(self, event):
         orientation = event.GetOrientation()
@@ -1614,12 +1643,53 @@ class PetriPanel(wx.ScrolledWindow):
         if command.does_nothing:
             return
         self.commands = self.commands.add_command(command)
+        self.frame.commands_list_changed()
         
     def undo(self):
-        self.commands = self.commands.go_prev()
+        if self.can_undo():
+            self.commands = self.commands.go_prev()
+            
+    def can_undo(self):
+        return self.strategy.allow_undo_redo and self.commands.has_prev()
         
     def redo(self):
-        self.commands = self.commands.go_next()
+        if self.can_redo():
+            self.commands = self.commands.go_next()
+            
+    def can_redo(self):
+        return self.strategy.allow_undo_redo and self.commands.has_next()
+    
+    def save(self):
+        return self.save_as(filepath=self.filepath)
+            
+    def save_as(self, filepath=None):
+        if filepath is None:
+            while True:
+                dlg = wx.FileDialog(
+                    self, message="Save file as ...", 
+                    defaultFile="", wildcard='JSON files (*.json)|*.json|All files|*', style=wx.SAVE
+                    )
+                if dlg.ShowModal() == wx.ID_OK:
+                    filepath = dlg.GetPath()
+                else:
+                    return
+                if not osp.exists(filepath):
+                    break       
+                if not osp.isfile(filepath):
+                    continue
+                dlg = wx.MessageDialog(self, message='File (%s) already exists. Overwrite it?'%filepath, style=wx.YES_NO|wx.CANCEL|wx.CENTER)
+                result = dlg.ShowModal()
+                dlg.Destroy()
+                if result == wx.ID_YES:
+                    break
+                elif result == wx.ID_NO:
+                    continue
+                elif result == wx.ID_CANCEL:
+                    return
+        if not filepath:
+            return
+        self.save_to_file(filepath, self.petri)
+        return True
         
     def on_size_event(self, event):
         self.size = event.GetSize()
@@ -1657,19 +1727,9 @@ class PetriPanel(wx.ScrolledWindow):
         self.strategy.on_left_dclick(event)
         self.SetFocus()
         
-    def on_key_down(self, event):
-        if event.ControlDown():
-            if self.strategy.allow_undo_redo:
-                c = event.GetKeyCode()
-                if c == ord('Z'):  # ord('Z')
-                    self.undo()
-                elif c== ord('Y'): # ord('Y')
-                    self.redo()
-        
+    def on_key_down(self, event):    
         self.strategy.on_key_down(event)
 
-        
-        
     def on_lbutton_timer(self, *args, **kwargs):
         x, y, w, h = self.GetScreenRect()
         w -= VSCROLL_X
@@ -1756,7 +1816,6 @@ class PetriPanel(wx.ScrolledWindow):
         return (x-self.view_point[0], y-self.view_point[1])
             
     def draw(self, dc, w, h):
-        
         for obj in self.get_objects_iter():
             obj.draw(dc)
             
@@ -1794,6 +1853,13 @@ class Example(wx.Frame):
         
         menubar = wx.MenuBar()
         fileMenu = wx.Menu()
+        new_page_item = fileMenu.Append(wx.ID_NEW, '&New\tCtrl+N', 'New Petri net')
+        open_item = fileMenu.Append(wx.ID_OPEN, '&Open\tCtrl+O', 'Open petri net')
+        close_item = fileMenu.Append(wx.ID_CLOSE, '&Close\tCtrl+W', 'Close current net')
+        fileMenu.AppendSeparator()
+        save_item = fileMenu.Append(wx.ID_SAVE, '&Save\tCtrl+S', 'Save petri net')
+        save_as_item = fileMenu.Append(wx.ID_SAVEAS, 'S&ave as\tCtrl+Shift+S', 'Save petri net as')
+        fileMenu.AppendSeparator()
         quit_item = fileMenu.Append(wx.ID_EXIT, '&Quit\tCtrl+Q', 'Quit application')
         menubar.Append(fileMenu, '&File')
         editMenu = wx.Menu()
@@ -1802,6 +1868,11 @@ class Example(wx.Frame):
         menubar.Append(editMenu, '&Edit')
         self.SetMenuBar(menubar)
         
+        self.Bind(wx.EVT_MENU, self.OnNew, new_page_item)
+        self.Bind(wx.EVT_MENU, self.OnOpen, open_item)
+        self.Bind(wx.EVT_MENU, self.OnClose, close_item)
+        self.Bind(wx.EVT_MENU, self.OnSave, save_item)
+        self.Bind(wx.EVT_MENU, self.OnSaveAs, save_as_item)
         self.Bind(wx.EVT_MENU, self.OnQuit, quit_item)
         self.Bind(wx.EVT_MENU, self.OnUndo, self.undo_item)
         self.Bind(wx.EVT_MENU, self.OnRedo, self.redo_item)
@@ -1832,32 +1903,28 @@ class Example(wx.Frame):
         self.toggle_button(mouse_button)
             
         vert_sizer.Add(buttons_sizer)
-        self.tabs = wx.Notebook(self)
+        self.tabs = wx.aui.AuiNotebook(self)
+        self.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CHANGED, self.OnPageChanged, self.tabs)
+        self.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CLOSE, self.OnPageClose, self.tabs)
         self._unnamed_count = 0
         self.add_new_page()
         vert_sizer.Add(self.tabs, proportion=1, flag=wx.EXPAND|wx.TOP, border=1)
         self.SetSizer(vert_sizer)
-        self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
         self.Centre() 
         self.Show()
         
+    def create_new_panel(self, title=None):
+        return PetriPanel(self.tabs, name=title, frame=self, strategy_getter=self.strategy_getter, clip_buffer=self.clip_buffer)
+        
     def add_new_page(self, title=None):
-        petri_panel = PetriPanel(self.tabs, strategy_getter=self.strategy_getter, clip_buffer=self.clip_buffer)
         if not title:
             self._unnamed_count += 1
             title = 'Petri net %s'%(str(self._unnamed_count) if self._unnamed_count else '')
-        self.tabs.AddPage(petri_panel, title)
-        
-    def on_key_down(self, event):
-        if event.ControlDown():
-            if event.GetKeyCode() == ord('N'):
-                self.add_new_page()
-                
-                
-        self.petri_panel.on_key_down(event)
+        petri_panel = self.create_new_panel(title)
+        self.tabs.AddPage(petri_panel, petri_panel.get_name(), select=True)
                 
     def panel_getter(self):
-        return self.tabs.GetCurrentPage()
+        return self.tabs.GetPage(self.tabs.Selection)
     
     petri_panel = property(panel_getter)
     
@@ -1880,26 +1947,110 @@ class Example(wx.Frame):
                 button.SetValue(False)
         self.strategy.on_switched_strategy()
         self.strategy = self.buttons[button_on]
+        self.commands_list_changed()
         self.petri_panel.SetFocus()
         
     def OnUndo(self, event):
         self.petri_panel.undo()
+        self.commands_list_changed()
+        
+    def OnNew(self, event):
+        self.add_new_page()
+        
+    def commands_list_changed(self):
         self.refresh_undo_redo()
+        tab_name = self.petri_panel.get_name()
+        self.tabs.SetPageText(self.tabs.Selection, tab_name)
         
     def refresh_undo_redo(self):
-        command = self.petri_panel.commands
+        self.redo_item.Enable(self.petri_panel.can_redo())
+        self.undo_item.Enable(self.petri_panel.can_undo())
+        
+    def OnPageClose(self, event):
+        if not self.close_tab(event.Selection):
+            event.Veto()
+        
+    def OnOpen(self, event):
+        dlg = wx.FileDialog(
+            self, message="Open file", 
+            defaultFile="", wildcard='JSON files (*.json)|*.json|All files|*', style=wx.OPEN
+            )
+        if dlg.ShowModal() != wx.ID_OK:
+            return
+        filepath = dlg.GetPath()
+        panel = self.create_new_panel('unnamed')
+        try:
+            panel.load_from_file(filepath)
+        except Exception, e:
+            self.DisplayError('Error while loading petri net:\n%s'%traceback.format_exc(), title='Error while opening file')
+        else:
+            self.tabs.AddPage(panel, panel.get_name(), select=True)
+        
+    def close_tab(self, pos):
+        """ Returns false if user decided not to close the tab """
+        tab = self.tabs.GetPage(pos)
+        if not tab.is_changed:
+            return True
+        dlg = wx.MessageDialog(self, message='There are unsaved changes in "%s". Save?'%tab.get_name(), style=wx.YES_NO|wx.CANCEL|wx.CENTER)
+        result = dlg.ShowModal()
+        if result == wx.ID_YES:
+            tab.save()
+        elif result == wx.ID_CANCEL:
+            return False
+        return True
+        
+    def OnClose(self, event):
+        if self.close_tab(self.tabs.Selection):
+            self.tabs.DeletePage(self.tabs.Selection)
+            
+        
+    def DisplayError(self, message, title='Error'):
+        wx.MessageBox(message=message, caption=title, style=wx.ICON_ERROR)
+        
+        
+    def OnSave(self, event):
+        try:
+            self.petri_panel.save()
+        except Exception, e:
+            self.DisplayError('Error while saving petri net:\n%s'%traceback.format_exc(), title='Error while saving file')
+        self.commands_list_changed()
+        
+    def OnSaveAs(self, event):
+        try:
+            self.petri_panel.save_as()
+        except Exception, e:
+            self.DisplayError('Error while saving petri net:\n%s'%traceback.format_exc(), title='Error while saving file')
+        self.commands_list_changed()
+        
+    def OnPageChanged(self, event):
+        self.commands_list_changed()
+        self.petri_panel.SetFocus()
         
     def OnRedo(self, event):
         self.petri_panel.redo()
-        self.refresh_undo_redo()
+        self.commands_list_changed()
+        
+    def quit(self):
+        page_count = self.tabs.GetPageCount()
+        for i in xrange(page_count):
+            tab = self.tabs.GetPage(i)
+            if not tab.is_changed:
+                continue
+            self.tabs.Selection = i
+            if not self.close_tab(i):
+                return False
+        return True
         
     def OnQuit(self, event):
-        print "Haha"
+        if self.quit():
+            self.Destroy()
         
 
 
 if __name__ == '__main__':
     Example(None, 'Line')
+    #import wx.lib.inspection
+    #wx.lib.inspection.InspectionTool().Show()
     app.MainLoop()
     '''
     p  = GUIPlace('p1', 1, (100,100))
