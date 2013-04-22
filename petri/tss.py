@@ -11,6 +11,7 @@ def gcd(x,y):
     return y
  
 def simplify(arr):
+    
     com_div = reduce(lambda a,b: gcd(abs(a),abs(b)) if ((a!=0) and (b!=0)) else a+b,arr)
     if com_div==0: return arr
     arr = arr / com_div
@@ -19,6 +20,8 @@ def simplify(arr):
  
 
 def filter_minimal(lst):
+    if not lst:
+        return lst
     max_coord = max(np.max(arr) for arr in lst)*2
     lst2 = [arr*max_coord for arr in lst]
     n = len(lst)
@@ -56,12 +59,17 @@ def combinations_number(value_vec):
 def solve(matr, ineq=False, limit=-1):
     """
     Get TSS for equation A*x = 0
-    If ineq is True, get TSS for A*x >= 0
+    If ineq is True, get TSS for A*x >= 0, 0<=x<=1
     """
     A = []
     for row in matr:
         A.append(np.array(row).flatten())
-    N, M = len(A),A[0].shape[0]
+    N = len(A)
+    rank = 0
+    try:
+        M = A[0].shape[0]
+    except IndexError:
+        return [], rank
     vec_base = [np.zeros((M,),dtype=int) for i in xrange(M)]
     for i in xrange(M):
         vec_base[i][i] = 1
@@ -76,6 +84,8 @@ def solve(matr, ineq=False, limit=-1):
             if sol_row[i] == 0:
                 prev_solutions.append(vec_base[i])            
     while True:
+        if not all(x==0 for x in sol_row):
+            rank += 1
         vec_collection = get_generating_collection(sol_row,vec_base, limit)
         vec_collection += prev_solutions
         #print "LEN of vec_collection",len(vec_collection)
@@ -89,7 +99,7 @@ def solve(matr, ineq=False, limit=-1):
         #print "Took",b,"seconds"
         prev_solutions = []
         if not A:
-            return vec_collection
+            return vec_collection, rank
         vec_values = []
         next_row_i = -1
         min_score = len(vec_collection)**2
@@ -120,14 +130,15 @@ def solve(matr, ineq=False, limit=-1):
             else:
                 if val==0:
                     prev_solutions.append(vec)
-            
+        if not vec_values:
+            return [], rank
         new_vec_values = simplify(vec_values)
         vec_values = new_vec_values
         if all(val>0 for val in vec_values) or all(val<0 for val in vec_values):
             break
         sol_row = np.array(vec_values)
         vec_base = vec_collection
-    return []
+    return [], rank
   
         
 def get_generating_collection(lst,vec_base, limit):
@@ -178,13 +189,13 @@ p3 p2 t5 p1"""
     for s in sol:
         print s
         A = np.matrix(x)
-    sol = solve(A.transpose())
+    sol, _ = solve(A.transpose())
     print "S-invariants:"
     for s in sol:
         print s
     print "Ineq"
     A = np.matrix([[-3,-4,5,-6],
                    [2,3,-3,1]])
-    sol = solve(A, ineq=True)
+    sol, _ = solve(A, ineq=True)
     for s in sol:
         print s
