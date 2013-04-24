@@ -8,6 +8,7 @@ import itertools
 import inspect
 import collections
   
+PROPERTY_FALSE, PROPERTY_PARTIALLY, PROPERTY_FULLY = 'false', 'partially', 'fully'
     
 def is_marked_trap(trap, places):
     for m, place in zip(trap, places):
@@ -17,20 +18,6 @@ def is_marked_trap(trap, places):
          
 def scalar_mul(vec1, vec2):
     return sum(v1*v2 for v1,v2 in zip(vec1, vec2))
-            
-#def deadlock_contains_trap(:
-            
-def get_liveness(deadlocks, traps, places):
-    marked_traps = list(get_marked_traps(traps, places))
-    print marked_traps
-    for deadlock in deadlocks:
-        for trap in marked_traps:
-            #check if deadlock has a marked trap in it
-            if all(deadlock>=trap):
-                break
-        else:
-            return deadlock
-    return None
     
 def get_uncovered(invariants, objs):
     uncovered = []
@@ -63,10 +50,10 @@ class Tristate(object):
     def __nonzero__(self):   # Python 3: __bool__()
         raise TypeError("Tristate value may not be used as implicit Boolean")
 
-    def __str__(self):
-        return str(self.value)
     def __repr__(self):
-        return "Tristate(%s)" % self.value       
+        return "Tristate(%s)" % self.value 
+    
+    __str__ = __repr__      
     
 def _reverse_index(lst):
     return {obj:i for i,obj in enumerate(lst)}
@@ -74,10 +61,14 @@ def _reverse_index(lst):
 def _id_compress(objects, vector):
     return [obj.unique_id for obj in itertools.compress(objects, vector)]
     
+def sum_weight(arcs):
+    return sum(abs(arc.weight) for arc in arcs)
+    
 class PetriProperties(object):
     def __init__(self, net=None):
         self._net = net
         self._reset()
+        self._ignored_fields = {'place_input_arcs', 'place_output_arcs','place_input_transitions', 'place_output_transitions'}
         
     def _reset(self):
         self.incidence_matrix = None
@@ -98,12 +89,27 @@ class PetriProperties(object):
         self.structural_uncovered_deadlocks = None
         self.liveness = None
         self.bounded_by_s = None
-        self.structural_boundness = None
-        self.repeatable = None
         self.structural_liveness = None
+        # Not actually properties
+        self.place_input_arcs = None
+        self.place_output_arcs = None
+        self.place_input_transitions = None
+        self.place_output_transitions = None
         # Simple properties
         self.state_machine = None
         self.marked_graph = None
+        self.free_choice = None
+        self.extended_free_choice = None
+        self.simple = None
+        self.asymmetric = None
+        # Properties we get from TSS
+        #TODO: How is "kerovana" translated?
+        self.regulated = None
+        self.structural_boundedness = None
+        # These properties can be partial. 0 - false, 1 - partial, 2 - fully
+        self.conservativeness = None #TODO: The only problem left!
+        self.repeatable = None
+        self.consistency = None
         
     def __getattribute__(self, attr):
         result = super(PetriProperties, self).__getattribute__(attr)
@@ -122,7 +128,7 @@ class PetriProperties(object):
     @property
     def _fields(self):
         for field in dir(self):
-            if not field.startswith('_'):
+            if not field.startswith('_') and field not in self._ignored_fields:
                 yield field
     
     def __iter__(self):
@@ -159,26 +165,64 @@ class PetriProperties(object):
     def _compute_t_invariants(self):
         #- incidence_matrix
         A = self.incidence_matrix
-        Ax_sol, A_rank = tss.solve(A, ineq=1)
-        #+ A_rank
-        self.A_rank = A_rank
-        ineq_sol = []
-        t_inv = []
-        for v in Ax_sol:
-            if (A*np.matrix(v).transpose()==0).all():
-                t_inv.append(v)
-            else:
-                ineq_sol.append(v)
+        t_inv, A_rank = tss.solve(A)
         #+ t_invariants
         self.t_invariants = t_inv
+        #+ A_rank
+        self.A_rank = A_rank
+        
+    _compute_A_rank = _compute_t_invariants
+    
+    def _compute_Ax_ineq_sol(self):
+        #- incidence_matrix
+        A = self.incidence_matrix
+        solutions, _ = tss.solve(A, ineq=True)
+        ineq_sol = []
+        for v in solutions:
+            if not (A*np.matrix(v).transpose()==0).all():
+                ineq_sol.append(v)
         #+ Ax_ineq_sol
         self.Ax_ineq_sol = ineq_sol
-        #+ structural_boundness
-        self.structural_boundness = not bool(ineq_sol)
-        #+ repeatable
-        self.repeatable = bool(t_inv)
+        #+ structural_boundedness
+        self.structural_boundedness = not bool(ineq_sol)
         
-    _compute_repeatable = _compute_structural_boundness = _compute_A_rank = _compute_Ax_ineq_sol = _compute_t_invariants
+    _compute_structural_boundedness = _compute_Ax_ineq_sol
+    
+    def _compute_conservativeness(self):
+        result = 2
+        # TODO: Should we solve Ax!=0 eq instead?
+        #- Ax_ineq_sol
+        #for sol in self.Ax_ineq_sol:
+        #    if all(sol)
+            
+    def _compute_repeatable(self):
+        # TODO: It's repeatable when it's covered by T invariants + Ax_ineq_sol-s?
+        result = 0
+        #- t_invariants
+        t_inv = self.t_invariants
+        #- Ax_ineq_sol
+        ineq_sol = self.Ax_ineq_sol
+        new_lst = t_inv + ineq_sol
+        if new_lst:
+            s = sum(new_lst)
+            if (s!=0).all():
+                result = 2
+            else:
+                result = 1
+        self.repeatable = result
+        
+    def _compute_consistency(self):
+        result = 2
+        #- t_uncovered
+        if self.t_uncovered:
+            result = 1
+        #- t_invariants
+        if not self.t_invariants:
+            result = 0
+            
+        #+ consistency
+        self.consistency = result
+        
     
     def _compute_s_invariants(self):
         A = self.incidence_matrix
@@ -222,6 +266,43 @@ class PetriProperties(object):
         
     _compute_bounded_by_s = _compute_place_limits
         
+    def _compute_place_input_transitions(self):
+        place_input_arcs = collections.defaultdict(lambda:[])
+        place_output_arcs = collections.defaultdict(lambda:[])
+        place_input_transitions = collections.defaultdict(lambda:[])
+        place_output_transitions = collections.defaultdict(lambda:[])
+        for transition in self._net.get_transitions_iter():
+            for arc in transition.output_arcs:
+                place_input_arcs[arc.place].append(arc)
+                place_input_transitions[arc.place].append(transition)
+            for arc in transition.input_arcs:
+                place_output_arcs[arc.place].append(arc)
+                place_output_transitions[arc.place].append(transition)
+                
+        for k,v in place_input_arcs.iteritems():
+            place_input_arcs[k] = frozenset(v)
+            
+        for k,v in place_output_arcs.iteritems():
+            place_output_arcs[k] = frozenset(v)
+            
+        for k,v in place_input_transitions.iteritems():
+            place_input_transitions[k] = frozenset(v)
+            
+        for k,v in place_output_transitions.iteritems():
+            place_output_transitions[k] = frozenset(v)
+                
+        #+ place_input_transitions
+        self.place_input_transitions = place_input_transitions
+        #+ place_output_transitions
+        self.place_output_transitions = place_output_transitions
+        
+        #+ place_input_arcs
+        self.place_input_arcs = place_input_arcs
+        #+ place_output_arcs
+        self.place_output_arcs = place_output_arcs
+        
+    _compute_place_output_arcs = _compute_place_input_arcs = _compute_place_output_transitions =_compute_place_input_transitions
+        
     def _compute_deadlock_matrix(self):
         places = _reverse_index(self._net.get_sorted_places())
         transitions = self._net.get_sorted_transitions()
@@ -230,33 +311,31 @@ class PetriProperties(object):
         tr_rows = 0
         # If place has no input arcs -> place is a deadlock.
         # If place has no output arcs -> http://cdn.instanttrap.com/trap.jpg
-        place_no_input = set(self._net.get_sorted_places())
-        place_no_output = set(self._net.get_sorted_places())
-        
         for transition in transitions:
             dl_rows += len(transition.output_arcs)
             tr_rows += len(transition.input_arcs)
-            for arc in transition.output_arcs:
-                place_no_input.discard(arc.place)
-            for arc in transition.input_arcs:
-                place_no_output.discard(arc.place)
         
-        print place_no_input
+        #- place_input
+        places_without_input = [place for (place, inp_trans) in self.place_input_arcs.iteritems() if not inp_trans]
         
-        dl_rows += len(place_no_input)
-        tr_rows += len(place_no_output)
+        #- place_output
+        places_without_output = [place for (place, out_trans) in self.place_output_arcs.iteritems() if not out_trans]
+        
+        
+        dl_rows += len(places_without_input)
+        tr_rows += len(places_without_output)
         
         dl_A = np.zeros((dl_rows, cols))
         tr_A = np.zeros((tr_rows, cols))
         
-        for i,p in enumerate(place_no_input):
+        for i,p in enumerate(places_without_input):
             dl_A[i,places[p]] = 1
             
-        for i,p in enumerate(place_no_output):
+        for i,p in enumerate(places_without_output):
             tr_A[i,places[p]] = 1
         
-        dl_i = len(place_no_input)
-        tr_i = len(place_no_output)
+        dl_i = len(places_without_input)
+        tr_i = len(places_without_output)
         for transition in transitions:
             #deadlocks
             for arc_out in transition.output_arcs:
@@ -349,37 +428,87 @@ class PetriProperties(object):
     def _compute_state_machine(self):
         result = True
         for transition in self._net.get_transitions_iter():
-            if not(len(transition.input_arcs) == len(transition.output_arcs) <= 1):
+            if not(sum_weight(transition.input_arcs) == sum_weight(transition.output_arcs) <= 1):
                 result = False
                 break
         #+ state_machine
-        self.state_machine = result
-        
-    def _is_marked_graph(self):
-        place_input = collections.defaultdict(lambda:0)
-        place_output = collections.defaultdict(lambda:0)
-        for transition in self._net.get_transitions_iter():
-            for arc in transition.input_arcs:
-                v = place_output[arc.place]+1
-                if v>1: return False
-                place_output[arc.place] = v
-            for arc in transition.output_arcs:
-                v = place_input[arc.place]+1
-                if v>1: return False
-                place_input[arc.place] = v
-        for place in itertools.chain(place_input, place_output):
-            if place_input[place]!=place_output[place]:
-                return False
-        return True
-        
-        
+        self.state_machine = result     
         
     def _compute_marked_graph(self):
-        #+ marked_graph
-        self.marked_graph = self._is_marked_graph()
-        
+        result = True
+        #- place_input
+        #- place_output
+        for place in self._net.get_places_iter():
+            if not(sum_weight(self.place_input_arcs[place]) == sum_weight(self.place_output_arcs[place]) <= 1):
+                result = False
+                break
     
+        #+ marked_graph
+        self.marked_graph = result
+        
+    def _check_output_place_property(self, check_property):
+        places = self._net.get_places()
+        result = True
+        for i in xrange(len(places)-1):
+            place1 = places[i]
+            #- place_output_arcs
+            poa1 = self.place_output_arcs[place1]
+            #- place_output_transitions
+            pot1 = self.place_output_transitions[place1]
+            if not pot1:
+                continue
+            for j in xrange(i+1,len(places)):
+                place2 = places[j]
+                #- place_output_arcs
+                poa2 = self.place_output_arcs[place2]
+                #- place_output_transitions
+                pot2 = self.place_output_transitions[place2]
+                if not pot2:
+                    continue
+                if not pot2.intersection(pot1, pot2):
+                    continue
+                if not check_property(poa1, poa2, pot1, pot2):
+                    result = False
+                    break
+        return result
+        
+    def _compute_free_choice(self):
+        #+ free_choice
+        self.free_choice = self._check_output_place_property(lambda poa1, poa2, pot1, pot2:sum_weight(poa1)==sum_weight(poa2)<=1)
+        
+    def _compute_extended_free_choice(self):
+        #+ extended_free_choice
+        self.extended_free_choice = self._check_output_place_property(lambda poa1, poa2, pot1, pot2:pot1==pot2)
 
+    def _compute_simple(self):
+        #+ simple
+        self.simple = self._check_output_place_property(lambda poa1, poa2, pot1, pot2:(sum_weight(poa1)<=1) or (sum_weight(poa2)<=1))
+
+    def _compute_asymmetric(self):
+        #+ asymmetric
+        self.asymmetric = self._check_output_place_property(lambda poa1, poa2, pot1, pot2:pot1.issubset(pot2) or pot2.issubset(pot1))
+
+    def _graph_is_tree(self):
+        return False
+        #- place_input
+        num_of_arcs = sum(len(pi) for (p,pi) in self.place_input)
+        #- place_output
+        num_of_arcs += sum(len(po) for (p,po) in self.place_output)
+        return num_of_arcs-1 == len(self._net.get_places())
+
+    def _compute_regulated(self):
+        result = False
+        #- A_rank
+        rank_complete = self.A_rank == len(self._net.get_places())
+        if rank_complete and self.marked_graph:
+            result = Tristate(True)
+        elif not rank_complete:
+            result = Tristate(False)
+        else:
+            result = Tristate(None)
+        #+ regulated
+        self.regulated = result
+            
 
 if __name__=='__main__':
     
@@ -444,158 +573,3 @@ if __name__=='__main__':
             print '####',prop_name
             print prop_value
         continue
-        print props.uncovered_deadlocks
-        
-        #for dl in props.deadlocks:
-        #    print dl
-        break
-        places = net.get_sorted_places()
-        transitions = net.get_sorted_transitions()
-        state = net.get_state()
-        # 0 - property False, 1 - partially, 2 - strictly
-        result = {'invariants':
-                {'T': {
-                    'vectors': [],
-                    'uncovered' : None,
-                    },
-                 'S': {
-                    'vectors': [],
-                    'uncovered' : None,
-                    'limits': None
-                    },
-                },
-              'deadlocks': [],
-              'traps'    : [],
-              'properties' :
-                {
-                    'bounded' : Tristate(None),
-                    'live'    : False,
-                    'contradictory':True,
-                    'repeatable': 0,
-                    'regulated': Tristate(None)
-                 }
-              }
-            
-        Ax_sol, t, A_rank, s,AT_rank = get_ts_invariants(net)
-        if AT_rank < len(transitions):
-            result['properties']['regulated'] = Tristate(False)
-        for t_inv in t:
-            result['invariants']['T']['vectors'].append(t_inv)
-        uncovered_transitions = [obj.unique_id for obj in get_uncovered(t, net.get_sorted_transitions())]
-        result['invariants']['T']['uncovered'] = uncovered_transitions
-        
-        limits = [None] * len(places)
-        
-        for s_inv in s:
-            result['invariants']['S']['vectors'].append(s_inv)
-            for i, s_inv_val in enumerate(s_inv):
-                if s_inv_val==0:
-                    continue
-                new_val = scalar_mul(s_inv, state) / float(s_inv_val)
-                if limits[i] is None or new_val<limits[i]:
-                    limits[i] = new_val
-                
-        uncovered_places = [obj.unique_id for obj in get_uncovered(s, net.get_sorted_places())]
-        result['invariants']['S']['uncovered'] = uncovered_places
-        result['invariants']['S']['limits'] = {obj.unique_id:limit for obj,limit in zip(net.get_sorted_places(),limits) if limit is not None}
-        if not uncovered_places:
-            result['properties']['bounded'] = Tristate(True)
-        if t:
-            result['properties']['contradictory'] = False
-            
-        
-        deadlocks, traps = get_deadlocks_traps(net)
-        
-        
-        
-        marked_traps = []
-        
-        for trap_vector in traps:
-            marked = is_marked_trap(trap_vector, places)
-            if marked:
-                marked_traps.append(trap_vector)
-            #trap_vector = 
-            dct = {'vector' : trap_vector,
-                   'marked' : marked}
-            result['traps'].append(dct)
-             
-        has_uncovered_deadlocks = False
-             
-        for deadlock_vector in deadlocks:
-            uncovered = True
-            for trap in marked_traps:
-                if all(deadlock_vector >= trap):
-                    uncovered = False
-                    break
-            has_uncovered_deadlocks = has_uncovered_deadlocks or uncovered
-            deadlock_vector = [obj.unique_id for obj in itertools.compress(places, deadlock_vector)]
-            dct = {'vector': deadlock_vector,
-                   'uncovered': uncovered}
-            result['deadlocks'].append(dct)
-        
-        strict_positive = any((x>0).all() for x in Ax_sol)
-        
-        print strict_positive
-        
-        result['properties']['live'] = (not has_uncovered_deadlocks) and bool(traps)
-        result['properties']['structurally_bounded'] = not bool(Ax_sol)
-        # TODO: Structural boundness - WTF???
-        # TODO: Regulated - is it places or transitions count to be compared with rank???
-        # TODO:
-        whole_result[filename] = result
-        
-    pprint(whole_result)
-        
-    
-    #if opt
-
-    
-    """ 
-    with open('bus_sim2.json', 'rb') as f:
-        obj = json.load(f)
-    net1 = petri.PetriNet.from_json_struct(obj)
-    print net1.get_state()
-    places = net1.get_sorted_places()
-    print 'Marking'
-    for place in places:
-        print place.unique_id,
-        
-    
-    transitions = net1.get_sorted_transitions()
-    
-    def format(p):
-        return json.dumps(p.to_json_struct(),indent=2, sort_keys=True)
-    
-    t,s = get_ts_invariants(net1)
-    
-    uncovered_transitions = get_uncovered(t, transitions)
-    
-    
-    if uncovered_transitions:
-        print "Net can't be bounded and live simultaneaously"
-    else:
-        print "Net can be bounded and live"
-    
-    uncovered_places = get_uncovered(s, places)
-    
-    if uncovered_places:
-        print "Places %s aren't covered by positive S-invariants."%(' '.join(str(place) for place in places))
-        print "Therefore they can be unlimited"
-    else:
-        print "Net is bounded"
-    
-    
-    
-    d,t = get_deadlocks_traps(net1)
-    print "Deadlocks"
-    for dd in d:
-        print dd
-    print "Traps"
-    for tt in t:
-        print tt
-    dl = get_liveness(d, t, places)
-    if dl is None:
-        print "Net is live!"
-    else:
-        print "Net isn't alive, deadlock %s isn't covered"%dl
-    """

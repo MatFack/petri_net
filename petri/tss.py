@@ -204,8 +204,10 @@ p3 p2 t5 p1"""
         
     print '#'*80
     
-    A = np.matrix([[1,0,-1],
-                   [0,1,0]])
-    sol, _ = solve(A, ineq=True)
+    A = np.matrix([[1,-1,0],
+                   [0,1,-1],
+                   [0,-1,1]])
+    sol, rank = solve(A)
+    print rank
     for s in sol:
         print s
