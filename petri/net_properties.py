@@ -5,81 +5,9 @@ import tss
 import json
 import re
 import itertools
-
-def _reverse_index(lst):
-    return dict(pair[::-1] for pair in enumerate(lst))
-
-def get_ts_invariants(petri_net, places=None, transitions=None):
-    if places is None:
-        places = _reverse_index(petri_net.get_sorted_places())
-    if transitions is None:
-        transitions = _reverse_index(petri_net.get_sorted_transitions())
-    A = np.zeros((len(places), len(transitions)))
-    for transition,col in transitions.iteritems():
-        for arc in transition.input_arcs:
-            row = places[arc.place]
-            A[row,col] -= abs(arc.weight)
-        for arc in transition.output_arcs:
-            row = places[arc.place]
-            A[row,col] += abs(arc.weight)
-    print A
-    Ax_sol, t_rank = tss.solve(A, ineq=1)
-    ineq_sol = []
-    t_inv = []
-    for v in Ax_sol:
-        if (A*np.matrix(v).transpose()==0).all():
-            t_inv.append(v)
-        else:
-            ineq_sol.append(v)
-    s_inv, s_rank = tss.solve(A.transpose())
-    return ineq_sol, t_inv, t_rank, s_inv, s_rank
-
-def get_deadlocks_traps(petri_net, places=None, transitions=None):
-    if not places:
-        places = _reverse_index(petri_net.get_sorted_places())
-    if not transitions:
-        transitions = _reverse_index(petri_net.get_sorted_transitions())
-    if not places and not transitions:
-        return [], []
-    cols = len(places)
-    dl_rows = 0
-    tr_rows = 0
-    for transition in transitions:
-        dl_rows += len(transition.output_arcs)
-        tr_rows += len(transition.input_arcs)
-    dl_A = np.zeros((dl_rows, cols))
-    tr_A = np.zeros((tr_rows, cols))
-    dl_i = 0
-    tr_i = 0
-    for transition in transitions:
-        #deadlocks
-        for arc_out in transition.output_arcs:
-            place_out = arc_out.place
-            #setting positive
-            for arc_in in transition.input_arcs:
-                place_in = arc_in.place
-                col = places[place_in]
-                dl_A[dl_i, col] = 1
-            #setting one negative
-            col = places[place_out]
-            dl_A[dl_i, col] = -1
-            dl_i += 1
-        #traps
-        for arc_in in transition.input_arcs:
-            place_in = arc_in.place
-            #setting positive
-            for arc_out in transition.output_arcs:
-                place_out = arc_out.place
-                col = places[place_out]
-                tr_A[tr_i, col] = 1
-            #setting one negative
-            col = places[place_in]
-            tr_A[tr_i, col] = -1
-            tr_i += 1
-    deadlocks, _ = tss.solve(dl_A, True, limit=1) 
-    traps, _ = tss.solve(tr_A, True, limit=1) 
-    return deadlocks, traps
-    
+import inspect
+import collections
+  
     
 def is_marked_trap(trap, places):
     for m, place in zip(trap, places):
@@ -138,7 +66,320 @@ class Tristate(object):
     def __str__(self):
         return str(self.value)
     def __repr__(self):
-        return "Tristate(%s)" % self.value        
+        return "Tristate(%s)" % self.value       
+    
+def _reverse_index(lst):
+    return {obj:i for i,obj in enumerate(lst)}
+
+def _id_compress(objects, vector):
+    return [obj.unique_id for obj in itertools.compress(objects, vector)]
+    
+class PetriProperties(object):
+    def __init__(self, net=None):
+        self._net = net
+        self._reset()
+        
+    def _reset(self):
+        self.incidence_matrix = None
+        self.Ax_ineq_sol = None
+        self.t_invariants = None
+        self.s_invariants = None
+        self.t_uncovered = None
+        self.s_uncovered = None
+        self.A_rank = None
+        self.AT_rank = None
+        self.place_limits = None
+        self.deadlock_matrix = None
+        self.trap_matrix = None
+        self.deadlocks = None
+        self.traps = None
+        self.marked_traps = None
+        self.uncovered_deadlocks = None
+        self.structural_uncovered_deadlocks = None
+        self.liveness = None
+        self.bounded_by_s = None
+        self.structural_boundness = None
+        self.repeatable = None
+        self.structural_liveness = None
+        # Simple properties
+        self.state_machine = None
+        self.marked_graph = None
+        
+    def __getattribute__(self, attr):
+        result = super(PetriProperties, self).__getattribute__(attr)
+        if result is not None:
+            return result
+        compute_func_name = '_compute_'+attr
+        try:
+            compute_func =  super(PetriProperties, self).__getattribute__(compute_func_name)
+        except AttributeError:
+            compute_func = None
+        if compute_func is None:
+            return result
+        compute_func()
+        return super(PetriProperties, self).__getattribute__(attr)
+    
+    @property
+    def _fields(self):
+        for field in dir(self):
+            if not field.startswith('_'):
+                yield field
+    
+    def __iter__(self):
+        for field in self._fields:
+            value = super(PetriProperties, self).__getattribute__(field)
+            if value is not None:
+                yield field, value
+            else:
+                err_field = field+'_error'
+                try:
+                    error = super(PetriProperties, self).__getattribute__(err_field)
+                except AttributeError:
+                    pass
+                else:
+                    yield err_field, error
+    
+    def _set_error(self, field, value):
+        setattr(self, field, None)
+        setattr(self, field+'_error', value)
+
+    def _compute_incidence_matrix(self):
+        transitions = self._net.get_sorted_transitions()
+        places = _reverse_index(self._net.get_sorted_places())
+        A = np.zeros((len(places), len(self._net.transitions)))
+        for col, transition in enumerate(transitions):
+            for arc in transition.input_arcs:
+                row = places[arc.place]
+                A[row,col] -= abs(arc.weight)
+            for arc in transition.output_arcs:
+                row = places[arc.place]
+                A[row,col] += abs(arc.weight)
+        self.incidence_matrix = A
+        
+    def _compute_t_invariants(self):
+        #- incidence_matrix
+        A = self.incidence_matrix
+        Ax_sol, A_rank = tss.solve(A, ineq=1)
+        #+ A_rank
+        self.A_rank = A_rank
+        ineq_sol = []
+        t_inv = []
+        for v in Ax_sol:
+            if (A*np.matrix(v).transpose()==0).all():
+                t_inv.append(v)
+            else:
+                ineq_sol.append(v)
+        #+ t_invariants
+        self.t_invariants = t_inv
+        #+ Ax_ineq_sol
+        self.Ax_ineq_sol = ineq_sol
+        #+ structural_boundness
+        self.structural_boundness = not bool(ineq_sol)
+        #+ repeatable
+        self.repeatable = bool(t_inv)
+        
+    _compute_repeatable = _compute_structural_boundness = _compute_A_rank = _compute_Ax_ineq_sol = _compute_t_invariants
+    
+    def _compute_s_invariants(self):
+        A = self.incidence_matrix
+        s_inv, AT_rank = tss.solve(A.transpose())
+        #+ s_invariants
+        self.s_invariants = s_inv
+        #+ AT_rank
+        self.AT_rank = AT_rank
+    
+    _compute_AT_rank = _compute_s_invariants
+    
+    def _compute_t_uncovered(self):
+        #- t_invariants
+        t = self.t_invariants
+        #+ t_uncovered
+        self.t_uncovered = [obj.unique_id for obj in get_uncovered(t, self._net.get_sorted_transitions())]
+    
+    def _compute_s_uncovered(self):
+        #- s_invariants
+        s = self.s_invariants
+        #+ s_uncovered
+        self.s_uncovered = [obj.unique_id for obj in get_uncovered(s, self._net.get_sorted_places())] 
+        
+    def _compute_place_limits(self):
+        places = self._net.get_sorted_places()
+        state = self._net.get_state()
+        limits = [None] * len(places)
+        #- s_invariants
+        s = self.s_invariants
+        for s_inv in s:
+            for i, s_inv_val in enumerate(s_inv):
+                if s_inv_val==0:
+                    continue
+                new_val = scalar_mul(s_inv, state) / float(s_inv_val)
+                if limits[i] is None or new_val<limits[i]:
+                    limits[i] = new_val
+        #+ place_limits
+        self.place_limits = {obj.unique_id:limit for obj,limit in zip(places, limits) if limit is not None}
+        #+ bounded_by_s
+        self.bounded_by_s = (len(self.place_limits) == len(places))
+        
+    _compute_bounded_by_s = _compute_place_limits
+        
+    def _compute_deadlock_matrix(self):
+        places = _reverse_index(self._net.get_sorted_places())
+        transitions = self._net.get_sorted_transitions()
+        cols = len(places)
+        dl_rows = 0
+        tr_rows = 0
+        # If place has no input arcs -> place is a deadlock.
+        # If place has no output arcs -> http://cdn.instanttrap.com/trap.jpg
+        place_no_input = set(self._net.get_sorted_places())
+        place_no_output = set(self._net.get_sorted_places())
+        
+        for transition in transitions:
+            dl_rows += len(transition.output_arcs)
+            tr_rows += len(transition.input_arcs)
+            for arc in transition.output_arcs:
+                place_no_input.discard(arc.place)
+            for arc in transition.input_arcs:
+                place_no_output.discard(arc.place)
+        
+        print place_no_input
+        
+        dl_rows += len(place_no_input)
+        tr_rows += len(place_no_output)
+        
+        dl_A = np.zeros((dl_rows, cols))
+        tr_A = np.zeros((tr_rows, cols))
+        
+        for i,p in enumerate(place_no_input):
+            dl_A[i,places[p]] = 1
+            
+        for i,p in enumerate(place_no_output):
+            tr_A[i,places[p]] = 1
+        
+        dl_i = len(place_no_input)
+        tr_i = len(place_no_output)
+        for transition in transitions:
+            #deadlocks
+            for arc_out in transition.output_arcs:
+                place_out = arc_out.place
+                #setting positive
+                for arc_in in transition.input_arcs:
+                    place_in = arc_in.place
+                    col = places[place_in]
+                    dl_A[dl_i, col] = 1
+                #setting one negative
+                col = places[place_out]
+                dl_A[dl_i, col] = -1
+                dl_i += 1
+            #traps
+            for arc_in in transition.input_arcs:
+                place_in = arc_in.place
+                #setting positive
+                for arc_out in transition.output_arcs:
+                    place_out = arc_out.place
+                    col = places[place_out]
+                    tr_A[tr_i, col] = 1
+                #setting one negative
+                col = places[place_in]
+                tr_A[tr_i, col] = -1
+                tr_i += 1
+        #+ deadlock_matrix
+        self.deadlock_matrix = dl_A
+        #+ trap_matrix
+        self.trap_matrix = tr_A
+        
+    _compute_trap_matrix = _compute_deadlock_matrix
+    
+    def _compute_deadlocks(self):
+        #  [_id_compress(places, deadlock_vector) for deadlock_vector in deadlock_vectors]
+        #- deadlock_matrix
+        #+ deadlocks
+        self.deadlocks, _ = tss.solve(self.deadlock_matrix, True, limit=1) 
+        
+    def _compute_traps(self):
+        #- trap_matrix
+        #+ traps
+        self.traps, _ = tss.solve(self.trap_matrix, True, limit=1) 
+        
+    def _compute_marked_traps(self):
+        marked_traps = []
+        places = self._net.get_sorted_places()
+        #- traps
+        traps = self.traps
+        for trap_vector in traps:
+            if is_marked_trap(trap_vector, places):
+                marked_traps.append(trap_vector)
+        #+ marked_traps
+        self.marked_traps = marked_traps
+                
+    def _get_uncovered_deadlocks(self, only_marked_traps):
+        uncovered_deadlocks = []
+        #- deadlocks
+        deadlocks = self.deadlocks
+        if only_marked_traps:
+            #- marked_traps
+            traps = self.marked_traps
+        else:
+            #- traps
+            traps = self.traps
+        for deadlock_vector in deadlocks:
+            for trap in traps:
+                if all(deadlock_vector >= trap):
+                    break
+            else:
+                uncovered_deadlocks.append(deadlock_vector)
+        #+ uncovered_deadlocks
+        return uncovered_deadlocks
+        
+    def _compute_uncovered_deadlocks(self):
+        self.uncovered_deadlocks = self._get_uncovered_deadlocks(only_marked_traps=True)
+        
+    def _compute_structural_uncovered_deadlocks(self):
+        self.structural_uncovered_deadlocks = self._get_uncovered_deadlocks(only_marked_traps=False)
+        
+    def _compute_liveness(self):
+        #- uncovered_deadlocks
+        #+ liveness
+        self.liveness = (not bool(self.uncovered_deadlocks)) 
+        
+    def _compute_structural_liveness(self):
+        #- structural_uncovered_deadlocks
+        #+ structural_liveness
+        self.structural_liveness = not bool(self.structural_uncovered_deadlocks)
+        
+    def _compute_state_machine(self):
+        result = True
+        for transition in self._net.get_transitions_iter():
+            if not(len(transition.input_arcs) == len(transition.output_arcs) <= 1):
+                result = False
+                break
+        #+ state_machine
+        self.state_machine = result
+        
+    def _is_marked_graph(self):
+        place_input = collections.defaultdict(lambda:0)
+        place_output = collections.defaultdict(lambda:0)
+        for transition in self._net.get_transitions_iter():
+            for arc in transition.input_arcs:
+                v = place_output[arc.place]+1
+                if v>1: return False
+                place_output[arc.place] = v
+            for arc in transition.output_arcs:
+                v = place_input[arc.place]+1
+                if v>1: return False
+                place_input[arc.place] = v
+        for place in itertools.chain(place_input, place_output):
+            if place_input[place]!=place_output[place]:
+                return False
+        return True
+        
+        
+        
+    def _compute_marked_graph(self):
+        #+ marked_graph
+        self.marked_graph = self._is_marked_graph()
+        
+    
+
 
 if __name__=='__main__':
     
@@ -159,8 +400,8 @@ if __name__=='__main__':
     DEBUG = True
     if DEBUG:
         import sys
-        sys.argv.extend([ '-f', 'json', 'mumu.json' ])
-    
+        sys.argv.extend([ '-f', 'json','test5.json' ])
+    p = PetriProperties()
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     parser.add_argument("-o", "--output", dest="filename",
@@ -172,6 +413,10 @@ if __name__=='__main__':
                   default=JSON_FORMAT, choices=[TEXT_FORMAT, JSON_FORMAT],
                   help="input file format")
     
+    all_properties = ','.join(p._fields)
+    parser.add_argument("-p", "--properties", dest="properties",
+              default=all_properties,
+              help="properties to be computed")
     args = parser.parse_args()
     from pprint import pprint
     whole_result = {}
@@ -184,6 +429,26 @@ if __name__=='__main__':
         elif args.format == TEXT_FORMAT:
             net = petri.PetriNet.from_string(data)
             
+        props = PetriProperties(net)
+        
+        for prop in args.properties.split(','):
+            if prop not in props._fields:
+                
+                props._set_error(prop, "Unknown property")
+            else:
+                getattr(props, prop)
+        
+        
+        dct = dict(props)
+        for prop_name, prop_value in dct.iteritems():
+            print '####',prop_name
+            print prop_value
+        continue
+        print props.uncovered_deadlocks
+        
+        #for dl in props.deadlocks:
+        #    print dl
+        break
         places = net.get_sorted_places()
         transitions = net.get_sorted_transitions()
         state = net.get_state()
@@ -211,8 +476,8 @@ if __name__=='__main__':
                  }
               }
             
-        Ax_sol, t, t_rank, s,s_rank = get_ts_invariants(net)
-        if s_rank < len(transitions):
+        Ax_sol, t, A_rank, s,AT_rank = get_ts_invariants(net)
+        if AT_rank < len(transitions):
             result['properties']['regulated'] = Tristate(False)
         for t_inv in t:
             result['invariants']['T']['vectors'].append(t_inv)
@@ -249,7 +514,7 @@ if __name__=='__main__':
             marked = is_marked_trap(trap_vector, places)
             if marked:
                 marked_traps.append(trap_vector)
-            trap_vector = [obj.unique_id for obj in itertools.compress(places, trap_vector)]
+            #trap_vector = 
             dct = {'vector' : trap_vector,
                    'marked' : marked}
             result['traps'].append(dct)

@@ -54,7 +54,6 @@ def _make_regex(fr, to, graph, k, cache):
         return bcd
 
 def make_regex(start, finish, graph):
-    
     result = []
     nv = {}
     new_graph = {}
