@@ -55,11 +55,14 @@ def _id_compress(objects, vector):
 def sum_weight(arcs):
     return sum(abs(arc.weight) for arc in arcs)
     
+class CantComputeError(Exception):
+    pass
+    
 class PetriProperties(object):
     def __init__(self, net=None):
         self._net = net
-        self._reset()
         self._ignored_fields = {'place_input_arcs', 'place_output_arcs','place_input_transitions', 'place_output_transitions'}
+        self._reset()
         
     def _reset(self):
         self.incidence_matrix = None
@@ -101,11 +104,17 @@ class PetriProperties(object):
         self.conservativeness = None #TODO: The only problem left!
         self.repeatable = None
         self.consistency = None
+        for field in self._fields:
+            self._set_error(field, None)
         
     def __getattribute__(self, attr):
         result = super(PetriProperties, self).__getattribute__(attr)
         if result is not None:
             return result
+        error = self._get_error(attr) 
+        if error is not None:
+            raise CantComputeError(error)
+            return None
         compute_func_name = '_compute_'+attr
         try:
             compute_func =  super(PetriProperties, self).__getattribute__(compute_func_name)
@@ -115,9 +124,13 @@ class PetriProperties(object):
             return result
         try:
             compute_func()
-        except:
-            self._set_error(attr, traceback.format_exc())
+        except CantComputeError, ex:
+            self._set_error(attr, ex.message)
             raise
+        except Exception:
+            error = traceback.format_exc()
+            self._set_error(attr, error)
+            raise CantComputeError(error)
         return super(PetriProperties, self).__getattribute__(attr)
     
     @property
@@ -158,11 +171,17 @@ class PetriProperties(object):
     def _set_error(self, field, value):
         setattr(self, field, None)
         setattr(self, field+'_error', value)
+        
+    def _get_error(self, field):
+        try:
+            return super(PetriProperties, self).__getattribute__(field+'_error')
+        except AttributeError:
+            return None
 
     def _compute_incidence_matrix(self):
         transitions = self._net.get_sorted_transitions()
         places = _reverse_index(self._net.get_sorted_places())
-        A = np.zeros((len(places), len(self._net.transitions)))
+        A = np.zeros((len(places), len(transitions)))
         for col, transition in enumerate(transitions):
             for arc in transition.input_arcs:
                 row = places[arc.place]
@@ -326,11 +345,12 @@ class PetriProperties(object):
             tr_rows += len(transition.input_arcs)
         
         empty_or_second_none = lambda x:not x or x[1]
+        print self.place_input_arcs
         #- place_input
-        places_without_input = [place for place in places if empty_or_second_none(self.place_input_arcs[place])]
+        places_without_input = [place for place in places if not self.place_input_arcs[place]]
         
         #- place_output
-        places_without_output = [place for place in places if empty_or_second_none(self.place_output_arcs[place])]
+        places_without_output = [place for place in places if not self.place_output_arcs[place]]
         
         dl_rows += len(places_without_input)
         tr_rows += len(places_without_output)
@@ -546,7 +566,7 @@ if __name__=='__main__':
     import json
     import traceback
     import glob
-    DEBUG = False
+    DEBUG = 0
     if DEBUG:
         sys.argv.extend([ '-f', 'json','test5.json' ])
         

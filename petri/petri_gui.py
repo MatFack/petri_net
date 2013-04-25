@@ -15,6 +15,20 @@
 # TODO: Put properties somewhere, (menu - analysis - tabbed window)
 # DONE: Create menu (save, open, exit, export)
 
+# TODO: Probably need unified frame for displaying graphs and petri nets.
+# TODO: Think about where graph and properties will be
+
+# TODO: split code into modules, but this isn't so urgent
+
+# So, the user looks at the graph and clicks one vertex, and the nclicks another vertex.   
+# First: analysis! Do it somehow, but it has to be
+# Second: shortest path from one set of vertices to another set of vertices
+# Third: ability to select all dead states
+# Probably, ability to select by some criteria
+
+
+# Well, and after paper shit, splitting into chunks and drawing only visible chunks. Later. Fuck paper shit.
+
 import wx
 import wx.aui
 import traceback
@@ -459,8 +473,12 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         
     def remove_point(self, point):
         if point.is_selected:
-            self.points_selected -= 1
+            self.__points_selected -= 1
         self.points.remove(point)
+        
+    def remove_arc_points(self):
+        self.points = []
+        self.points_selected = 0
         
     def select_line_pen(self, dc):
         if self.is_selected:
@@ -900,7 +918,39 @@ class GUIPetriNet(petri.PetriNet):
             i += 1
             if pattern%i not in dct:
                 return pattern%i
-
+            
+    def remove_arc_points(self):
+        for transition in self.transitions.values():
+            for arc in itertools.chain(transition.input_arcs, transition.output_arcs):
+                arc.remove_arc_points()
+                
+    def kk_layout(self):
+        objects = {}
+        for place in self.get_sorted_places():
+            objects[place] = len(objects)
+        for transition in self.get_sorted_transitions():
+            objects[transition] = len(objects)
+        import igraph
+        graph = igraph.Graph(directed=True)
+        graph.add_vertices(len(objects))
+        for transition in self.get_sorted_transitions():
+            trans_n = objects[transition]
+            for arc in transition.input_arcs:
+                graph.add_edge(objects[arc.place], trans_n)
+            for arc in transition.output_arcs:
+                graph.add_edge(trans_n, objects[arc.place])
+        objects_lst = [None]*len(objects)
+        if not objects_lst:
+            return
+        for obj, i in objects.iteritems():
+            objects_lst[i] = obj
+        layout = graph.layout_kamada_kawai()
+        bbox = layout.bounding_box()
+        layout.translate((-bbox.left, -bbox.top))
+        layout.scale(200)
+        for obj, pos in zip(objects_lst, layout):
+            x,y = pos
+            obj.set_position(x+RIGHT_OFFSET*3,y+BOTTOM_OFFSET*3)
     
 
 class Strategy(object):
@@ -1621,7 +1671,7 @@ class PetriPanel(wx.ScrolledWindow):
             self.load_from_file('net.json')
         except:
             self.petri = GUIPetriNet.from_string("""
-                # p1::1 p2::2 p3::3 p4::4 p5::5
+                # p1::1 p2::2 p3::3 p4::4
                 p2 -> t1 -> p1 p3
                 p1 -> t2 -> p3
                 p1 -> t3 -> p4
@@ -1652,6 +1702,15 @@ class PetriPanel(wx.ScrolledWindow):
     @property
     def is_changed(self):
         return self.commands is not self.saved_command
+    
+    @property
+    def has_unsaved_changes(self):
+        if self.is_changed:
+            return True
+        if self.filepath is None:
+            if self.petri.places or self.petri.transitions:
+                return True
+        return False
         
     def GetObjectsInRect(self, lx, ly, tx, ty): #ignore labels
         if not self.petri:
@@ -1665,15 +1724,15 @@ class PetriPanel(wx.ScrolledWindow):
         
     def get_name(self):
         result = self.GetName()
-        if self.is_changed:
+        if self.has_unsaved_changes:
             result = '*'+result
         return result
         
-    def load_from_file(self, filepath):
+    def load_from_file(self, filepath, format):
         net = None
         with open(filepath, 'rb') as f:
-            json_struct = json.load(f)
-        net = GUIPetriNet.from_json_struct(json_struct)
+            data = f.read()
+        net = format.import_net(data)
         self.update_title(filepath)
         self.filepath = filepath
         self.petri = net
@@ -1683,13 +1742,15 @@ class PetriPanel(wx.ScrolledWindow):
         title = osp.splitext(basename)[0]
         self.SetName(title)
         
-    def save_to_file(self, filepath, net):
-        self.update_title(filepath)
-        json_struct = net.to_json_struct()
+    def save_to_file(self, filepath, net, format):
+        if format.persistent:
+            self.update_title(filepath)
+        data = format.export_net(net)
         with open(filepath, 'wb') as f:
-            json.dump(json_struct, f)
-        self.filepath = filepath
-        self.saved_command = self.commands
+            f.write(data)
+        if format.persistent:
+            self.filepath = filepath
+            self.saved_command = self.commands
         
     def on_scroll(self, event):
         orientation = event.GetOrientation()
@@ -1751,16 +1812,17 @@ class PetriPanel(wx.ScrolledWindow):
         if self.can_select():
             self.strategy.on_select_all()
     
-    def save(self):
-        return self.save_as(filepath=self.filepath)
+    def save(self, format):
+        return self.save_as(filepath=self.filepath, format=format)
     
             
-    def save_as(self, filepath=None):
+    def save_as(self, format, filepath=None):
         if filepath is None:
             while True:
+                print format
                 dlg = wx.FileDialog(
                     self, message="Save file as ...", 
-                    defaultFile="", wildcard='JSON files (*.json)|*.json|All files|*', style=wx.SAVE
+                    defaultFile="", wildcard=format.get_wildcard(), style=wx.SAVE
                     )
                 if dlg.ShowModal() == wx.ID_OK:
                     filepath = dlg.GetPath()
@@ -1781,7 +1843,7 @@ class PetriPanel(wx.ScrolledWindow):
                     return
         if not filepath:
             return
-        self.save_to_file(filepath, self.petri)
+        self.save_to_file(filepath, self.petri, format=format)
         return True
         
     def on_size_event(self, event):
@@ -1941,6 +2003,65 @@ class Buffer(object):
     def is_empty(self):
         return self.places is None and self.transitions is None
 
+class ImportExportFormat(object):
+    @classmethod
+    def get_formats(self):
+        return [('All files', '*.*')]
+    
+    @classmethod
+    def get_wildcard(self):
+        return '|'.join('%s (%s)|%s'%(label, wc, wc) for (label, wc) in self.get_formats())
+    
+    @classmethod
+    def export_net(cls, petri):
+        raise NotImplementedError
+    
+    @classmethod
+    def import_net(cls, s):
+        raise NotImplementedError
+    
+    _persistent = False
+    
+    @classmethod
+    @property
+    def persistent(cls):
+        """ True if petri net can be stored in this format without (major) loss. False if it's just an export/import format """
+        return cls._persistent
+
+class TxtFormat(ImportExportFormat):
+    name = 'TXT file'
+    description = 'TXT file'
+    @classmethod
+    def get_formats(self):
+        return [('TXT files', '*.txt')] + super(TxtFormat, self).get_formats()
+    
+    @classmethod
+    def export_net(cls, petri):
+        return petri.to_string()
+    
+    @classmethod
+    def import_net(cls, s):
+        net =  GUIPetriNet.from_string(s)
+        net.kk_layout()
+        return net
+    
+class JSONFormat(ImportExportFormat):
+    name = 'JSON file'
+    description = 'JSON file'
+    _persistent = True
+    @classmethod
+    def get_formats(self):
+        return [('JSON files', '*.json')] + super(JSONFormat, self).get_formats()
+    
+    @classmethod
+    def export_net(cls, petri):
+        return json.dumps(petri.to_json_struct())
+    
+    @classmethod
+    def import_net(cls, s):
+        return GUIPetriNet.from_json_struct(json.loads(s))
+
+
 class Example(wx.Frame):
     def __init__(self, parent, title):
         super(Example, self).__init__(parent, title=title, 
@@ -1948,15 +2069,29 @@ class Example(wx.Frame):
         vert_sizer = wx.BoxSizer(wx.VERTICAL)
         buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.clip_buffer = Buffer()
-        
+        formats = [TxtFormat,]
         menubar = wx.MenuBar()
         fileMenu = wx.Menu()
         new_page_item = fileMenu.Append(wx.ID_NEW, '&New\tCtrl+N', 'New Petri net')
         open_item = fileMenu.Append(wx.ID_OPEN, '&Open\tCtrl+O', 'Open petri net')
-        close_item = fileMenu.Append(wx.ID_CLOSE, '&Close\tCtrl+W', 'Close current net')
+        self.close_item = fileMenu.Append(wx.ID_CLOSE, '&Close\tCtrl+W', 'Close current net')
         fileMenu.AppendSeparator()
-        save_item = fileMenu.Append(wx.ID_SAVE, '&Save\tCtrl+S', 'Save petri net')
-        save_as_item = fileMenu.Append(wx.ID_SAVEAS, 'S&ave as\tCtrl+Shift+S', 'Save petri net as')
+        self.save_item = fileMenu.Append(wx.ID_SAVE, '&Save\tCtrl+S', 'Save petri net')
+        self.save_as_item = fileMenu.Append(wx.ID_SAVEAS, 'S&ave as\tCtrl+Shift+S', 'Save petri net as')
+        fileMenu.AppendSeparator()
+        import_menu = wx.Menu()
+        export_menu = wx.Menu()
+        for format in formats:
+            def import_handler(event):
+                self.open(format)
+            def export_handler(event):
+                self.save_as(format)
+            import_item = import_menu.Append(wx.NewId(), format.name, format.description)
+            self.Bind(wx.EVT_MENU, import_handler, import_item)
+            export_item = export_menu.Append(wx.NewId(), format.name, format.description)
+            self.Bind(wx.EVT_MENU, export_handler, export_item)
+        fileMenu.AppendMenu(wx.NewId(), '&Import from', import_menu)
+        fileMenu.AppendMenu(wx.NewId(), '&Export to', export_menu)
         fileMenu.AppendSeparator()
         quit_item = fileMenu.Append(wx.ID_EXIT, '&Quit\tCtrl+Q', 'Quit application')
         menubar.Append(fileMenu, '&File')
@@ -1971,6 +2106,9 @@ class Example(wx.Frame):
         editMenu.AppendSeparator()
         self.select_all_item = editMenu.Append(wx.ID_SELECTALL, '&Select all\tCtrl+A', 'Select all elements')
         menubar.Append(editMenu, '&Edit')
+        layoutMenu = wx.Menu()
+        self.kk_layout_item = layoutMenu.Append(wx.NewId(), '&Kamada-Kawai layout', 'Layout net by Kamada-Kawai algorithm')
+        menubar.Append(layoutMenu, '&Layout')
         #analysisMenu = wx.Menu()
 
         self.SetMenuBar(menubar)
@@ -1978,10 +2116,10 @@ class Example(wx.Frame):
         # File
         self.Bind(wx.EVT_MENU, self.OnNew, new_page_item)
         self.Bind(wx.EVT_MENU, self.OnOpen, open_item)
-        self.Bind(wx.EVT_MENU, self.OnClose, close_item)
+        self.Bind(wx.EVT_MENU, self.OnClose, self.close_item)
         # --- separator ---
-        self.Bind(wx.EVT_MENU, self.OnSave, save_item)
-        self.Bind(wx.EVT_MENU, self.OnSaveAs, save_as_item)
+        self.Bind(wx.EVT_MENU, self.OnSave, self.save_item)
+        self.Bind(wx.EVT_MENU, self.OnSaveAs, self.save_as_item)
         # --- separator ---
         self.Bind(wx.EVT_MENU, self.OnQuit, quit_item)
         # Edit
@@ -1994,6 +2132,8 @@ class Example(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnDelete, self.delete_item)
         # --- separator ---
         self.Bind(wx.EVT_MENU, self.OnSelectAll, self.select_all_item)
+        # Layout
+        self.Bind(wx.EVT_MENU, self.OnKKLayout, self.kk_layout_item)
         # Bind close
         self.Bind(wx.EVT_CLOSE, self.OnQuit)
         # Button bitmaps
@@ -2042,6 +2182,7 @@ class Example(wx.Frame):
             title = 'Petri net %s'%(str(self._unnamed_count) if self._unnamed_count else '')
         petri_panel = self.create_new_panel(title)
         self.tabs.AddPage(petri_panel, petri_panel.get_name(), select=True)
+        self.update_menu()
                 
     def panel_getter(self):
         return self.tabs.GetPage(self.tabs.Selection)
@@ -2070,6 +2211,16 @@ class Example(wx.Frame):
         self.update_menu()
         self.petri_panel.SetFocus()
         
+    def OnKKLayout(self, event):
+        petri = self.petri_panel.petri
+        new_petri = petri.__class__.from_json_struct(petri.to_json_struct())
+        new_petri.remove_arc_points()
+        new_petri.kk_layout()
+        self.add_new_page()
+        self.petri_panel.petri = new_petri
+        self.petri_panel.update_bounds()
+        self.petri_panel.Refresh()
+        
     def OnUndo(self, event):
         self.petri_panel.undo()
         self.update_menu()
@@ -2097,33 +2248,46 @@ class Example(wx.Frame):
         
     def update_menu(self):
         self.refresh_undo_redo()
-        tab_name = self.petri_panel.get_name()
-        self.tabs.SetPageText(self.tabs.Selection, tab_name)
+        if self.tabs.GetPageCount():
+            tab_name = self.petri_panel.get_name()
+            self.tabs.SetPageText(self.tabs.Selection, tab_name)
         
     def refresh_undo_redo(self):
-        self.redo_item.Enable(self.petri_panel.can_redo())
-        self.undo_item.Enable(self.petri_panel.can_undo())
-        self.paste_item.Enable(not self.clip_buffer.is_empty() and self.petri_panel.can_paste())
-        self.cut_item.Enable(self.petri_panel.can_cut())
-        self.copy_item.Enable(self.petri_panel.can_copy())
-        self.delete_item.Enable(self.petri_panel.can_delete())
-        self.select_all_item.Enable(self.petri_panel.can_select())
+        enable = True
+        if self.tabs.GetPageCount()==0:
+            enable = False
+        self.redo_item.Enable(enable and self.petri_panel.can_redo())
+        self.undo_item.Enable(enable and self.petri_panel.can_undo())
+        self.paste_item.Enable(enable and not self.clip_buffer.is_empty() and self.petri_panel.can_paste())
+        self.cut_item.Enable(enable and self.petri_panel.can_cut() )
+        self.copy_item.Enable(enable and self.petri_panel.can_copy() )
+        self.delete_item.Enable(enable and self.petri_panel.can_delete())
+        self.select_all_item.Enable(enable and self.petri_panel.can_select())
+        self.kk_layout_item.Enable(enable)
+        self.close_item.Enable(enable)
+        self.save_as_item.Enable(enable)
+        self.save_item.Enable(enable and self.petri_panel.has_unsaved_changes)
         
     def OnPageClose(self, event):
         if not self.close_tab(event.Selection):
             event.Veto()
+        else:
+            wx.CallAfter(self.update_menu)
         
     def OnOpen(self, event):
+        self.open(JSONFormat)
+        
+    def open(self, format):
         dlg = wx.FileDialog(
             self, message="Open file", 
-            defaultFile="", wildcard='JSON files (*.json)|*.json|All files|*', style=wx.OPEN
+            defaultFile="", wildcard=format.get_wildcard(), style=wx.OPEN
             )
         if dlg.ShowModal() != wx.ID_OK:
             return
         filepath = dlg.GetPath()
         panel = self.create_new_panel('unnamed')
         try:
-            panel.load_from_file(filepath)
+            panel.load_from_file(filepath, format=format)
         except Exception, e:
             self.DisplayError('Error while loading petri net:\n%s'%traceback.format_exc(), title='Error while opening file')
         else:
@@ -2132,7 +2296,7 @@ class Example(wx.Frame):
     def close_tab(self, pos):
         """ Returns false if user decided not to close the tab """
         tab = self.tabs.GetPage(pos)
-        if not tab.is_changed:
+        if not tab.has_unsaved_changes:
             return True
         dlg = wx.MessageDialog(self, message='There are unsaved changes in "%s". Save?'%tab.get_name(), style=wx.YES_NO|wx.CANCEL|wx.CENTER)
         result = dlg.ShowModal()
@@ -2145,25 +2309,28 @@ class Example(wx.Frame):
     def OnClose(self, event):
         if self.close_tab(self.tabs.Selection):
             self.tabs.DeletePage(self.tabs.Selection)
+        self.update_menu()
             
         
     def DisplayError(self, message, title='Error'):
         wx.MessageBox(message=message, caption=title, style=wx.ICON_ERROR)
         
+    def save_as(self, format):
+        try:
+            self.petri_panel.save_as(format)
+        except Exception, e:
+            self.DisplayError('Error while saving petri net:\n%s'%traceback.format_exc(), title='Error while saving file')
+        self.update_menu()
         
     def OnSave(self, event):
         try:
-            self.petri_panel.save()
+            self.petri_panel.save(JSONFormat)
         except Exception, e:
             self.DisplayError('Error while saving petri net:\n%s'%traceback.format_exc(), title='Error while saving file')
         self.update_menu()
         
     def OnSaveAs(self, event):
-        try:
-            self.petri_panel.save_as()
-        except Exception, e:
-            self.DisplayError('Error while saving petri net:\n%s'%traceback.format_exc(), title='Error while saving file')
-        self.update_menu()
+        self.save_as(JSONFormat)
         
     def OnPageChanged(self, event):
         self.update_menu()
@@ -2177,7 +2344,7 @@ class Example(wx.Frame):
         page_count = self.tabs.GetPageCount()
         for i in xrange(page_count):
             tab = self.tabs.GetPage(i)
-            if not tab.is_changed:
+            if not tab.has_unsaved_changes:
                 continue
             self.tabs.Selection = i
             if not self.close_tab(i):

@@ -284,7 +284,7 @@ class PetriNet(Serializable):
         return self.cached_sorted_transitions
     
     def get_state(self):
-        return [place.tokens for place in self.get_sorted_places()]
+        return tuple(place.tokens for place in self.get_sorted_places())
         
     def __getitem__(self, key):
         return self.places[key]
@@ -374,8 +374,38 @@ class PetriNet(Serializable):
             """
             net.new_transition(net=net, unique_id=name, input_arcs=inp, output_arcs=outp)
         return net
+    
+    def _space_safe(self, s):
+        return s.replace(' ', '_')
+    
+    def _format_arc(self, arc):
+        result = arc.place.unique_id
+        if abs(arc.weight)!=1:
+            result+= '::'+str(abs(arc.weight))
+        return result
             
-
+    
+    def _arcs_to_string(self, arcs):
+        return ' '.join(self._format_arc(arc) for arc in arcs)
+            
+    def to_string(self):
+        result = ''
+        tokens_str = []
+        for place in self.get_sorted_places():
+            if place.tokens:
+                tokens_str.append('%s::%d'%(place.unique_id, place.tokens))
+        if tokens_str:
+            result += '#'+' '.join(tokens_str)
+        transitions_str = []
+        for transition in self.get_sorted_transitions():
+            transitions_str.append(self._arcs_to_string(transition.input_arcs) + ' -> ' + \
+                                   transition.unique_id + ' -> ' + \
+                                   self._arcs_to_string(transition.output_arcs))
+        if result:
+            result+='\n'
+        result += '\n'.join(transitions_str)
+        return result
+        
     
     def __str__(self):
         places = sorted(self.places.items(),key=lambda x:x[0])
@@ -392,10 +422,13 @@ if __name__=='__main__':
     
 
     net1 = PetriNet.from_string("""
-    p2 -> t1 -> p1 p4
+    #p1::1 p2::50
+    p2 -> t1 -> p2 p1 p4
     p3 -> t2 -> p5
     """)
     
+    print net1.to_string()
+    1/0
     p = net1.to_json_struct()
     
     print format(net1)
