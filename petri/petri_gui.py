@@ -1931,16 +1931,6 @@ class Buffer(object):
     def set_content(self, places, transitions):
         self.places = places
         self.transitions = transitions
-        """
-        print "PLACES"
-        for place in self.places:
-            print "PLACE"
-            print json.dumps(place[1], indent=4)
-        print "TRANSITIONS"
-        for transition in self.transitions:
-            print "TRANSITIOn"
-            print json.dumps(transition[1], indent=4)
-        """
         
     def reset_content(self):
         self.places = self.transitions = None
@@ -1981,6 +1971,8 @@ class Example(wx.Frame):
         editMenu.AppendSeparator()
         self.select_all_item = editMenu.Append(wx.ID_SELECTALL, '&Select all\tCtrl+A', 'Select all elements')
         menubar.Append(editMenu, '&Edit')
+        #analysisMenu = wx.Menu()
+
         self.SetMenuBar(menubar)
         # Menu bindings
         # File

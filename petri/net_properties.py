@@ -2,10 +2,7 @@
 
 import numpy as np
 import tss
-import json
-import re
 import itertools
-import inspect
 import collections
   
 PROPERTY_FALSE, PROPERTY_PARTIALLY, PROPERTY_FULLY = 'false', 'partially', 'fully'
@@ -28,12 +25,6 @@ def get_uncovered(invariants, objs):
         if val==0:
             uncovered.append(objs[i])
     return uncovered
-       
-class NumpyAwareJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.ndarray) and obj.ndim == 1:
-            return [x for x in obj]
-        return json.JSONEncoder.default(self, obj)
       
 class Tristate(object):
     """ True - Yes, False - No, None - Unknown """
@@ -106,7 +97,7 @@ class PetriProperties(object):
         #TODO: How is "kerovana" translated?
         self.regulated = None
         self.structural_boundedness = None
-        # These properties can be partial. 0 - false, 1 - partial, 2 - fully
+        # These properties can be partial.
         self.conservativeness = None #TODO: The only problem left!
         self.repeatable = None
         self.consistency = None
@@ -122,7 +113,11 @@ class PetriProperties(object):
             compute_func = None
         if compute_func is None:
             return result
-        compute_func()
+        try:
+            compute_func()
+        except:
+            self._set_error(attr, traceback.format_exc())
+            raise
         return super(PetriProperties, self).__getattribute__(attr)
     
     @property
@@ -130,6 +125,21 @@ class PetriProperties(object):
         for field in dir(self):
             if not field.startswith('_') and field not in self._ignored_fields:
                 yield field
+                
+    def _process_properties(self, properties=None):
+        fields = set(self._fields)
+        if properties is None:
+            properties = fields
+        were_errors = False
+        for prop in properties:
+            if prop not in fields:
+                self._set_error(prop, "Unknown property")
+            else:
+                try:
+                    getattr(props, prop)
+                except Exception, ex:
+                    were_errors = True
+        return were_errors
     
     def __iter__(self):
         for field in self._fields:
@@ -197,7 +207,7 @@ class PetriProperties(object):
             
     def _compute_repeatable(self):
         # TODO: It's repeatable when it's covered by T invariants + Ax_ineq_sol-s?
-        result = 0
+        result = PROPERTY_FALSE
         #- t_invariants
         t_inv = self.t_invariants
         #- Ax_ineq_sol
@@ -206,19 +216,19 @@ class PetriProperties(object):
         if new_lst:
             s = sum(new_lst)
             if (s!=0).all():
-                result = 2
+                result = PROPERTY_FULLY
             else:
-                result = 1
+                result = PROPERTY_PARTIALLY
         self.repeatable = result
         
     def _compute_consistency(self):
-        result = 2
+        result = PROPERTY_FULLY
         #- t_uncovered
         if self.t_uncovered:
-            result = 1
+            result = PROPERTY_PARTIALLY
         #- t_invariants
         if not self.t_invariants:
-            result = 0
+            result = PROPERTY_FALSE
             
         #+ consistency
         self.consistency = result
@@ -315,12 +325,12 @@ class PetriProperties(object):
             dl_rows += len(transition.output_arcs)
             tr_rows += len(transition.input_arcs)
         
+        empty_or_second_none = lambda x:not x or x[1]
         #- place_input
-        places_without_input = [place for (place, inp_trans) in self.place_input_arcs.iteritems() if not inp_trans]
+        places_without_input = [place for place in places if empty_or_second_none(self.place_input_arcs[place])]
         
         #- place_output
-        places_without_output = [place for (place, out_trans) in self.place_output_arcs.iteritems() if not out_trans]
-        
+        places_without_output = [place for place in places if empty_or_second_none(self.place_output_arcs[place])]
         
         dl_rows += len(places_without_input)
         tr_rows += len(places_without_output)
@@ -509,6 +519,13 @@ class PetriProperties(object):
         #+ regulated
         self.regulated = result
             
+def get_filenames(filenames):
+    for fname in filenames:
+        if any(c in fname for c in '*?[]'):
+            for name in glob.glob(fname):
+                yield name
+        else:
+            yield fname
 
 if __name__=='__main__':
     
@@ -519,25 +536,37 @@ if __name__=='__main__':
     #
     # Each deadlock 
     #
-    #
-    
-    JSON_FORMAT, TEXT_FORMAT = 'json', 'text'
+    #   
+    import os
+    import sys
+    if os.name is 'nt':
+        import win32_unicode_argv
     import petri
     import argparse
-    import itertools
+    import json
+    import traceback
     import glob
-    DEBUG = True
+    DEBUG = False
     if DEBUG:
-        import sys
         sys.argv.extend([ '-f', 'json','test5.json' ])
+        
+    class NumpyAwareJSONEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            #print type(obj)
+            elif isinstance(obj, Tristate):
+                return obj.value
+            return json.JSONEncoder.default(self, obj)
+        
     p = PetriProperties()
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
-    parser.add_argument("-o", "--output", dest="filename",
+    parser.add_argument("-o", "--output", dest="out_filename",
                   help="write output to FILE", metavar="FILE")
     
     parser.add_argument('input_file', nargs='+')
-    
+    JSON_FORMAT, TEXT_FORMAT = 'json', 'text'
     parser.add_argument("-f", "--format",
                   default=JSON_FORMAT, choices=[TEXT_FORMAT, JSON_FORMAT],
                   help="input file format")
@@ -549,27 +578,35 @@ if __name__=='__main__':
     args = parser.parse_args()
     from pprint import pprint
     whole_result = {}
-    for filename in (itertools.chain(*[glob.glob(filepath) for filepath in args.input_file])):
-        with open(filename, 'rb') as f:
-            data = f.read()
-        if args.format == JSON_FORMAT:
-            data = json.loads(data)
-            net = petri.PetriNet.from_json_struct(data)
-        elif args.format == TEXT_FORMAT:
-            net = petri.PetriNet.from_string(data)
-            
-        props = PetriProperties(net)
-        
-        for prop in args.properties.split(','):
-            if prop not in props._fields:
+    encoder = NumpyAwareJSONEncoder(indent=2, encoding='utf-8')
+    errors = total = problems =0
+    for filename in get_filenames(args.input_file):
+        total += 1
+        try:
+            with open(filename, 'rb') as f:
+                data = f.read()
+            if args.format == JSON_FORMAT:
+                data = json.loads(data)
+                net = petri.PetriNet.from_json_struct(data)
+            elif args.format == TEXT_FORMAT:
+                net = petri.PetriNet.from_string(data)
                 
-                props._set_error(prop, "Unknown property")
-            else:
-                getattr(props, prop)
-        
-        
-        dct = dict(props)
-        for prop_name, prop_value in dct.iteritems():
-            print '####',prop_name
-            print prop_value
-        continue
+            props = PetriProperties(net)
+            were_errors = props._process_properties(args.properties.split(','))
+            if were_errors:
+                problems += 1
+            dct = dict(props)
+            whole_result[filename] = dct
+        except Exception, e:
+            print e
+            whole_result[filename] = traceback.format_exc()
+            errors+=1
+    if args.out_filename: 
+        #print repr(whole_result)
+        result = encoder.encode(whole_result)
+        with open(args.out_filename, 'wb') as f:
+            f.write(result)
+    else:
+        pprint(whole_result)
+        print "#"*80
+    print "Successfully processed %d out of %d nets, %d of which had some errors"%(total-errors, total, problems)
