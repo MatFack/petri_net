@@ -2253,7 +2253,7 @@ class Example(wx.Frame):
         self.automatic_layout_item.Enable(enable)
         self.close_item.Enable(enable)
         self.save_as_item.Enable(enable)
-        self.save_item.Enable(enable and self.petri_panel.has_unsaved_changes)
+        self.save_item.Enable(enable and (self.petri_panel.has_unsaved_changes or ( self.petri_panel.filepath is None)))
         
     def OnPageClose(self, event):
         if not self.close_tab(event.Selection):

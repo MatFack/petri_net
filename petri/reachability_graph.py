@@ -115,9 +115,10 @@ class ReachabilityGraph(object):
 if __name__ == '__main__':
     import json
     import petri
-    with open('2bounded.json','rb') as f:
+    with open('pots.json','rb') as f:
         net = petri.PetriNet.from_json_struct(json.load(f))
     r = ReachabilityGraph(net)
     r.explore(net.get_state())
-    
-    print r.explored
+    for s in r.explored:
+        print s,r.explored[s]
+    #print r.explored

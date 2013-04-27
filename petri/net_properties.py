@@ -225,7 +225,7 @@ class PetriProperties(object):
         #    if all(sol)
             
     def _compute_repeatable(self):
-        # TODO: It's repeatable when it's covered by T invariants + Ax_ineq_sol-s?
+        # It's repeatable when it's covered by T invariants + Ax_ineq_sol-s?
         result = PROPERTY_FALSE
         #- t_invariants
         t_inv = self.t_invariants
@@ -448,6 +448,7 @@ class PetriProperties(object):
     def _compute_liveness(self):
         #- uncovered_deadlocks
         #+ liveness
+        # TODO: HELP! Free choice, assymetric, look at p. 148
         self.liveness = (not bool(self.uncovered_deadlocks)) 
         
     def _compute_structural_liveness(self):
