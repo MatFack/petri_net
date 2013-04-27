@@ -106,7 +106,6 @@ class ReachabilityGraph(object):
                     to_name = self.names[neighbour]
                     arcs+=1
                     G.add_edge(name, to_name, name=trans)
-            print "ARCS",arcs
             G.vs["label"] = G.vs["name"]
             G.es["label"] = G.es["name"]
             layout = G.layout("kk")
