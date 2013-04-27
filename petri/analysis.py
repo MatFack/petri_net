@@ -2,9 +2,13 @@
 
 import re
 from collections import defaultdict
- 
+
+'''
+
+'''
+
 def skb(x):
-    if len(x)==1 or x=='EPS':
+    if '|' not in x or x=='EPS':
         return x
     
     b = {'(':')',
@@ -13,25 +17,43 @@ def skb(x):
         return x
     return '('+x+')' 
     
-
+COUNT = 0
+    
+sentinel = object()
+    
 def _make_regex(fr, to, graph, k, cache):
-    val = cache.get((fr, to, k), None)
+    global COUNT
+    global sentinel
+    COUNT += 1
     try:
         if len(cache['graph'][fr])==0:
             return None
     except:
         return None
-    if val:
-        return val
     if k==0:
         val = graph.get((fr, to), None)
         if val and fr==to:
             val = '{'+val+'}'
         return val
-    a = _make_regex(fr, to, graph, k-1, cache)
-    b = _make_regex(fr, k, graph, k-1, cache)
-    d = _make_regex(k, to, graph, k-1, cache)
-    c = _make_regex(k, k, graph, k-1, cache)
+    a = cache.get((fr, to, k-1), sentinel)
+    if a is sentinel:
+        a = _make_regex(fr, to, graph, k-1, cache)
+        cache[(fr, to, k-1)] = a
+    
+    b = cache.get((fr, k, k-1), sentinel)
+    if b is sentinel:
+        b = _make_regex(fr, k, graph, k-1, cache)
+        cache[(fr, k, k-1)] = b
+        
+    d = cache.get((k, to, k-1), sentinel)
+    if d is sentinel:    
+        d = _make_regex(k, to, graph, k-1, cache)
+        cache[(k, to, k-1)] = d
+    
+    c = cache.get((k, k, k-1), sentinel)
+    if c is sentinel:
+        c = _make_regex(k, k, graph, k-1, cache)
+        cache[(k, k, k-1)] = c
     old_c = c
     if c is None:
         c = 'EPS'
@@ -62,7 +84,7 @@ def make_regex(start, finish, graph):
             nv[v] = len(nv)
         tr = graph[v]
         lst = []
-        for c, subv in tr:
+        for c, subv in tr.iteritems():
             if subv not in nv:
                 nv[subv] = len(nv)
             lst.append((c, nv[subv]))
@@ -76,10 +98,14 @@ def make_regex(start, finish, graph):
     cache = {}
     cache['graph'] = new_graph
     k = len(graph)
+    print k
     for fin in new_fin:
         result.append(_make_regex(start, fin, new_new_graph, k, cache))
     return "| \n".join(skb(x or 'EPS') for x in result)
 
-
-#regex = make_regex(start,finish, graph)
-#print regex
+if __name__ == '__main__':
+    graph = {(0, 0, 0, 1, 1, 0, 0): {u't4': (0, 1, 0, 1, 0, 1, 0), u't2': (0, 0, 1, 0, 1, 0, 0)}, (1, 0, 0, 1, 0, 1, 0): {u't2': (1, 0, 1, 0, 0, 1, 0), u't3': (0, 0, 0, 1, 1, 0, 0)}, (0, 1, 0, 0, 0, 0, 1): {u't6': (0, 1, 0, 1, 0, 1, 0), u't1': (1, 0, 0, 0, 0, 0, 1)}, (0, 1, 1, 0, 0, 1, 0): {u't5': (0, 1, 0, 0, 0, 0, 1), u't1': (1, 0, 1, 0, 0, 1, 0)}, (0, 0, 1, 0, 1, 0, 0): {u't4': (0, 1, 1, 0, 0, 1, 0)}, (0, 1, 0, 1, 0, 1, 0): {u't2': (0, 1, 1, 0, 0, 1, 0), u't1': (1, 0, 0, 1, 0, 1, 0)}, (1, 0, 0, 0, 0, 0, 1): {u't6': (1, 0, 0, 1, 0, 1, 0)}, (1, 0, 1, 0, 0, 1, 0): {u't5': (1, 0, 0, 0, 0, 0, 1), u't3': (0, 0, 1, 0, 1, 0, 0)}}
+    graph = {(0, 1, 1): {u't4': (0, 1, 0), u't3': (0, 0, 2), u't1': ('w', 1, 1)}, (0, 1, 2): {u't4': (0, 1, 1), u't3': (0, 0, 3), u't1': ('w', 1, 2)}, ('w', 2, 1): {u't4': ('w', 2, 0), u't2': ('w', 'w', 1), u't3': ('w', 1, 2), u't1': ('w', 2, 1)}, ('w', 1, 1): {u't4': ('w', 1, 0), u't2': ('w', 'w', 1), u't3': ('w', 0, 2), u't1': ('w', 1, 1)}, ('w', 2, 0): {u't2': ('w', 'w', 0), u't3': ('w', 1, 1), u't1': ('w', 2, 0)}, (0, 2, 1): {u't4': (0, 2, 0), u't3': (0, 1, 2), u't1': ('w', 2, 1)}, (0, 2, 0): {u't3': (0, 1, 1), u't1': ('w', 2, 0)}, ('w', 1, 0): {u't2': ('w', 'w', 0), u't3': ('w', 0, 1), u't1': ('w', 1, 0)}, ('w', 3, 0): {u't2': ('w', 'w', 0), u't3': ('w', 2, 1), u't1': ('w', 3, 0)}, ('w', 'w', 'w'): {u't4': ('w', 'w', 'w'), u't2': ('w', 'w', 'w'), u't3': ('w', 'w', 'w'), u't1': ('w', 'w', 'w')}, (0, 0, 3): {u't4': (0, 0, 2), u't1': ('w', 0, 3)}, (0, 0, 2): {u't4': (0, 0, 1), u't1': ('w', 0, 2)}, (0, 3, 0): {u't3': (0, 2, 1), u't1': ('w', 3, 0)}, (0, 0, 1): {u't4': (0, 0, 0), u't1': ('w', 0, 1)}, (0, 0, 0): {u't1': ('w', 0, 0)}, ('w', 0, 1): {u't4': ('w', 0, 0), u't2': ('w', 'w', 1), u't1': ('w', 0, 1)}, ('w', 1, 2): {u't4': ('w', 1, 1), u't2': ('w', 'w', 2), u't3': ('w', 0, 3), u't1': ('w', 1, 2)}, ('w', 0, 0): {u't2': ('w', 'w', 0), u't1': ('w', 0, 0)}, ('w', 0, 3): {u't4': ('w', 0, 2), u't2': ('w', 'w', 3), u't1': ('w', 0, 3)}, ('w', 'w', 3): {u't4': ('w', 'w', 2), u't2': ('w', 'w', 3), u't3': ('w', 'w', 'w'), u't1': ('w', 'w', 3)}, ('w', 0, 2): {u't4': ('w', 0, 1), u't2': ('w', 'w', 2), u't1': ('w', 0, 2)}, ('w', 'w', 2): {u't4': ('w', 'w', 1), u't2': ('w', 'w', 2), u't3': ('w', 'w', 'w'), u't1': ('w', 'w', 2)}, ('w', 'w', 1): {u't4': ('w', 'w', 0), u't2': ('w', 'w', 1), u't3': ('w', 'w', 'w'), u't1': ('w', 'w', 1)}, (0, 1, 0): {u't3': (0, 0, 1), u't1': ('w', 1, 0)}, ('w', 'w', 0): {u't2': ('w', 'w', 0), u't3': ('w', 'w', 'w'), u't1': ('w', 'w', 0)}}
+    graph = {(0, 1, 0, 3, 0): {}, (0, 1, 0, 2, 1): {u't1': (0, 1, 0, 3, 0)}, (1, 0, 0, 1, 2): {u't2': (0, 0, 1, 1, 2), u't1': (1, 0, 0, 2, 1)}, (0, 1, 0, 1, 2): {u't1': (0, 1, 0, 2, 1)}, (1, 0, 0, 0, 3): {u't2': (0, 0, 1, 0, 3), u't1': (1, 0, 0, 1, 2)}, (0, 1, 0, 0, 3): {u't1': (0, 1, 0, 1, 2)}, (1, 0, 0, 3, 0): {u't2': (0, 0, 1, 3, 0)}, (0, 0, 1, 1, 2): {u't3': (0, 1, 0, 1, 2), u't1': (0, 0, 1, 2, 1)}, (0, 0, 1, 0, 3): {u't3': (0, 1, 0, 0, 3), u't1': (0, 0, 1, 1, 2)}, (0, 0, 1, 3, 0): {u't3': (0, 1, 0, 3, 0)}, (0, 0, 1, 2, 1): {u't3': (0, 1, 0, 2, 1), u't1': (0, 0, 1, 3, 0)}, (1, 0, 0, 2, 1): {u't2': (0, 0, 1, 2, 1), u't1': (1, 0, 0, 3, 0)}}
+    regex = make_regex((1,0,0,0,3),[(0, 1, 0,3,0)], graph)
+    print regex

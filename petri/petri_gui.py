@@ -924,7 +924,7 @@ class GUIPetriNet(petri.PetriNet):
             for arc in itertools.chain(transition.input_arcs, transition.output_arcs):
                 arc.remove_arc_points()
                 
-    def kk_layout(self):
+    def automatic_layout(self):
         objects = {}
         for place in self.get_sorted_places():
             objects[place] = len(objects)
@@ -944,7 +944,7 @@ class GUIPetriNet(petri.PetriNet):
             return
         for obj, i in objects.iteritems():
             objects_lst[i] = obj
-        layout = graph.layout_kamada_kawai()
+        layout = graph.layout_auto()
         bbox = layout.bounding_box()
         layout.translate((-bbox.left, -bbox.top))
         layout.scale(200)
@@ -1650,16 +1650,14 @@ class CreateDeleteObjectCommand(Command):
             obj.delete()
         
 
-class PetriPanel(wx.ScrolledWindow):
+class ObjectsCanvas(wx.ScrolledWindow):
     def __init__(self, parent, frame, strategy_getter, clip_buffer, **kwargs):
-        super(PetriPanel, self).__init__(parent, **kwargs)
+        super(ObjectsCanvas, self).__init__(parent, **kwargs)
         self.clip_buffer = clip_buffer
         self.strategy_getter = strategy_getter
         self.frame = frame
         self.SetDoubleBuffered(True)
         self.size = 0, 0
-        self.mouse_x = self.mouse_y = 0
-        self.first_time = True
         self.commands = Command()
         self.saved_command = self.commands
         self.canvas_size = [1, 1] # w, h
@@ -1688,11 +1686,7 @@ class PetriPanel(wx.ScrolledWindow):
         self.Bind(wx.EVT_LEFT_DCLICK, self.on_left_button_dclick)
         self.Bind(wx.EVT_RIGHT_DOWN, self.on_right_button_down)
         self.Bind(wx.EVT_RIGHT_UP, self.on_right_button_up)
-        #self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
         self.Bind(wx.EVT_SCROLLWIN, self.on_scroll)
-        #self.strategy = MoveAndSelectStrategy(self)
-        #self.strategy = SimulateStrategy(self)
-        #self.petri.transitions['t1'].set_horizontal(True)
         
         
     @property
@@ -1712,9 +1706,7 @@ class PetriPanel(wx.ScrolledWindow):
                 return True
         return False
         
-    def GetObjectsInRect(self, lx, ly, tx, ty): #ignore labels
-        if not self.petri:
-            return
+    def GetObjectsInRect(self, lx, ly, tx, ty):
         for obj in self.get_objects_iter():
             if isinstance(obj, ObjectLabel):
                 continue
@@ -1858,12 +1850,6 @@ class PetriPanel(wx.ScrolledWindow):
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawRectangle(0,0,w,h, convert=False)
         self.draw(dc, w, h)
-        if self.first_time:
-            self.first_time = False
-            dc.SetPen(wx.WHITE_PEN)
-            dc.SetBrush(wx.WHITE_BRUSH)
-            dc.DrawRectangle(0,0,w,h, convert=False)
-            self.draw(dc, w, h)
         
     def on_left_button_down(self, event):
         if self.strategy.need_capture_mouse:
@@ -1886,6 +1872,7 @@ class PetriPanel(wx.ScrolledWindow):
         self.strategy.on_key_down(event)
 
     def on_lbutton_timer(self, *args, **kwargs):
+        """ Dirty hack to catch the moment when mouse leaves window and capture it. wx.EVT_LEAVE_WINDOW is not always sent. """
         x, y, w, h = self.GetScreenRect()
         w -= VSCROLL_X
         h -= HSCROLL_Y
@@ -1905,6 +1892,7 @@ class PetriPanel(wx.ScrolledWindow):
         wx.CallLater(20, self.on_lbutton_timer)
         
     def get_object_at(self, x, y):
+        """ Gets object under given virtual position """
         # Check in reverse order so the topmost object will be selected
         for obj in self.get_objects_reversed_iter():
             if obj.contains_point(x, y):
@@ -1917,38 +1905,18 @@ class PetriPanel(wx.ScrolledWindow):
         self.strategy.on_left_up(event)
         
     def get_objects_iter(self):
-        for place in self.petri.get_places_iter():
-            yield place
-            yield place.label
-        for transition in self.petri.get_transitions_iter():
-            yield transition
-            yield transition.label
-        for transition in self.petri.get_transitions_iter():   
-            for arc in transition.get_arcs():
-                yield arc
-                for point in arc.points:
-                    yield point
+        raise NotImplementedError
         
     def get_objects_reversed_iter(self):
-        for transition in reversed(self.petri.get_transitions()):
-            for arc in reversed(transition.get_arcs()):
-                for point in reversed(arc.points):
-                    yield point
-                yield arc
-        for transition in reversed(self.petri.get_transitions()):
-            yield transition.label
-            yield transition
-        for place in reversed(self.petri.get_places()):
-            yield place.label
-            yield place
+        raise NotImplementedError
             
     def update_bounds(self):
+        """ Update canvas size and adjust scrollbars to it """
         if self.strategy.is_moving_objects:
+            # Do not update when user is moving something, because it will cause mess.
             return
         max_x, max_y = 0, 0
         for obj in self.get_objects_iter():
-            if isinstance(obj, ObjectLabel):
-                obj.recalculate_position() #dirty hack
             x,y = obj.get_position()
             w,h = obj.get_size()
             max_x = max(max_x, x+w)
@@ -1974,15 +1942,34 @@ class PetriPanel(wx.ScrolledWindow):
     def draw(self, dc, w, h):
         for obj in self.get_objects_iter():
             obj.draw(dc)
-            
         self.strategy.draw(dc)
         
-        """
-        dc.SetPen(wx.BLACK_PEN)
-        dc.DrawLine(0,0,w,h)
-        if self.mouse_pos:
-            dc.DrawLine(0, 0, self.mouse_pos[0], self.mouse_pos[1])
-        """
+class PetriPanel(ObjectsCanvas):
+    def get_objects_iter(self):
+        for place in self.petri.get_places_iter():
+            yield place
+            yield place.label
+        for transition in self.petri.get_transitions_iter():
+            yield transition
+            yield transition.label
+        for transition in self.petri.get_transitions_iter():   
+            for arc in transition.get_arcs():
+                yield arc
+                for point in arc.points:
+                    yield point
+        
+    def get_objects_reversed_iter(self):
+        for transition in reversed(self.petri.get_transitions()):
+            for arc in reversed(transition.get_arcs()):
+                for point in reversed(arc.points):
+                    yield point
+                yield arc
+        for transition in reversed(self.petri.get_transitions()):
+            yield transition.label
+            yield transition
+        for place in reversed(self.petri.get_places()):
+            yield place.label
+            yield place
         
 
 class Buffer(object):
@@ -2042,7 +2029,7 @@ class TxtFormat(ImportExportFormat):
     @classmethod
     def import_net(cls, s):
         net =  GUIPetriNet.from_string(s)
-        net.kk_layout()
+        net.automatic_layout()
         return net
     
 class JSONFormat(ImportExportFormat):
@@ -2107,7 +2094,7 @@ class Example(wx.Frame):
         self.select_all_item = editMenu.Append(wx.ID_SELECTALL, '&Select all\tCtrl+A', 'Select all elements')
         menubar.Append(editMenu, '&Edit')
         layoutMenu = wx.Menu()
-        self.kk_layout_item = layoutMenu.Append(wx.NewId(), '&Kamada-Kawai layout', 'Layout net by Kamada-Kawai algorithm')
+        self.automatic_layout_item = layoutMenu.Append(wx.NewId(), '&Automatic layout', 'Automatic layout of current net')
         menubar.Append(layoutMenu, '&Layout')
         #analysisMenu = wx.Menu()
 
@@ -2133,7 +2120,7 @@ class Example(wx.Frame):
         # --- separator ---
         self.Bind(wx.EVT_MENU, self.OnSelectAll, self.select_all_item)
         # Layout
-        self.Bind(wx.EVT_MENU, self.OnKKLayout, self.kk_layout_item)
+        self.Bind(wx.EVT_MENU, self.OnKKLayout, self.automatic_layout_item)
         # Bind close
         self.Bind(wx.EVT_CLOSE, self.OnQuit)
         # Button bitmaps
@@ -2215,7 +2202,7 @@ class Example(wx.Frame):
         petri = self.petri_panel.petri
         new_petri = petri.__class__.from_json_struct(petri.to_json_struct())
         new_petri.remove_arc_points()
-        new_petri.kk_layout()
+        new_petri.automatic_layout()
         self.add_new_page()
         self.petri_panel.petri = new_petri
         self.petri_panel.update_bounds()
@@ -2263,7 +2250,7 @@ class Example(wx.Frame):
         self.copy_item.Enable(enable and self.petri_panel.can_copy() )
         self.delete_item.Enable(enable and self.petri_panel.can_delete())
         self.select_all_item.Enable(enable and self.petri_panel.can_select())
-        self.kk_layout_item.Enable(enable)
+        self.automatic_layout_item.Enable(enable)
         self.close_item.Enable(enable)
         self.save_as_item.Enable(enable)
         self.save_item.Enable(enable and self.petri_panel.has_unsaved_changes)
@@ -2298,7 +2285,7 @@ class Example(wx.Frame):
         tab = self.tabs.GetPage(pos)
         if not tab.has_unsaved_changes:
             return True
-        dlg = wx.MessageDialog(self, message='There are unsaved changes in "%s". Save?'%tab.get_name(), style=wx.YES_NO|wx.CANCEL|wx.CENTER)
+        dlg = wx.MessageDialog(self, message='There are unsaved changes in "%s". Save?'%tab.GetName(), style=wx.YES_NO|wx.CANCEL|wx.CENTER)
         result = dlg.ShowModal()
         if result == wx.ID_YES:
             tab.save()

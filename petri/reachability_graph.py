@@ -5,11 +5,44 @@ from pprint import pprint
 import igraph
 # This is prototype, no premature optimisation please
 
-def get_next_state(state, trans):
-    result = tuple(s+t for (s,t) in zip(state, trans))
+DEBUG = True
+
+def spec_add(a, b):
+    if a == 'w' or b=='w':
+        return 'w'
+    return a+b
+
+def get_next_state(state, trans, req):
+    lst = []
+    for s, a, r in zip(state, trans, req):
+        if s != 'w':
+            if s+r <0:
+                return None
+        lst.append(spec_add(s, a))
+    return tuple(lst)
+    result = tuple(spec_add(s, t) for (s,t) in zip(state, trans))
     if any(r<0 for r in result):
         return None
     return result
+
+def greater_than(marking1, marking2):
+    result = []
+    for m1, m2 in zip(marking1, marking2):
+        if m2=='w':
+            if m1=='w':
+                result.append('w')
+            else:
+                return None
+        else:
+            if m1 == 'w' or m1 > m2:
+                result.append('w')
+            elif m1==m2:
+                result.append(m1)
+            elif m1<m2:
+                return None
+    return result
+            
+            
 
 class ReachabilityGraph(object):
     def __init__(self, net, properties=None):
@@ -19,56 +52,73 @@ class ReachabilityGraph(object):
         self.properties = properties
         
         self.explored = {}
-        self.move_tuples = map(lambda lst:tuple(int(c) for c in lst), self.properties.incidence_matrix.transpose().tolist())
+        places = {place:i for i,place in enumerate(self.net.get_sorted_places())}
         self.move_names = [transition.unique_id for transition in self.net.get_sorted_transitions()]
-        print self.move_tuples
+        self.transition_moves = {}
+        for transition in self.net.get_sorted_transitions():
+            req_tuple = [0]*len(places)
+            move_tuple = [0]*len(places)
+            for arc in transition.input_arcs:
+                n = places[arc.place]
+                req_tuple[n] -= abs(arc.weight)
+                move_tuple[n] -= abs(arc.weight)
+            for arc in transition.output_arcs:
+                n = places[arc.place]
+                move_tuple[n] += abs(arc.weight)
+            self.transition_moves[transition.unique_id] = (tuple(move_tuple), tuple(req_tuple))
+
         
         
     def explore(self, initial):
-        names = {}
-        stack = collections.deque([initial])
+        self.names = {}
+        stack = collections.deque([(initial, 0)])
+        cur_path = collections.deque()
         while stack:
-            state = stack.pop()
-            names[state] = 'S%d'%(len(names)+1)
+            state, level = stack.pop()
+            while cur_path and cur_path[-1][-1] >= level:
+                cur_path.pop()
+            cur_path.append((state, level))
+            self.names[state] = 'S%d %r'%(len(self.names)+1, state)
             neighbours = {}
             self.explored[state] = neighbours
-            for i, tpl in enumerate(self.move_tuples):
-                next_state = get_next_state(state, tpl)
+            for trans_name, (move, req) in self.transition_moves.iteritems():
+                next_state = get_next_state(state, move, req)
                 if next_state:
+                    for s, _ in reversed(cur_path):
+                        res = greater_than(next_state, s)
+                        if res:
+                            next_state = tuple(res)
+                            break
                     if next_state not in self.explored:
-                        stack.append(next_state)
-                    neighbours[self.move_names[i]] = next_state
-        if True:
-            
+                        stack.append((next_state, level+1))
+                    neighbours[trans_name] = next_state
+        if DEBUG:
             G = igraph.Graph(directed=True)
-            
-            labels = {}
-            print self.explored
-            for v, neighbours in self.explored.iteritems():
-                print v,neighbours
-                name = names[v]
+            print "STATES",len(self.explored)
+            for state in self.explored:
+                name = self.names[state]
                 G.add_vertex(name)
+            labels = {}
+            arcs = 0
+            for v, neighbours in self.explored.iteritems():
+                name = self.names[v]
                 for trans, neighbour in neighbours.iteritems():
-                    to_name = names[neighbour]
-                    G.add_vertex(to_name)
-                    G.add_edge(name, to_name)
-            
-                    
-        
+                    to_name = self.names[neighbour]
+                    arcs+=1
+                    G.add_edge(name, to_name, name=trans)
+            print "ARCS",arcs
+            G.vs["label"] = G.vs["name"]
+            G.es["label"] = G.es["name"]
             layout = G.layout("kk")
-            for p in layout:
-                print p
-            #igraph.plot(G, layout=layout )
+            igraph.plot(G)
             
-        
-    
-        
-        
         
 if __name__ == '__main__':
     import json
     import petri
-    with open('bus_sim.json','rb') as f:
+    with open('2bounded.json','rb') as f:
         net = petri.PetriNet.from_json_struct(json.load(f))
     r = ReachabilityGraph(net)
     r.explore(net.get_state())
+    
+    print r.explored
