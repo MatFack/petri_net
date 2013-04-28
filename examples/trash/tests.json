@@ -1,0 +1,67 @@
+{
+  "test1 - \u043a\u043e\u043f\u0438\u044f.json": {
+    "structural_uncovered_deadlocks": [], 
+    "t_uncovered": [], 
+    "simple": true, 
+    "regulated": false, 
+    "place_limits": {
+      "p1": 0.0
+    }, 
+    "extended_free_choice": true, 
+    "A_rank": 0, 
+    "deadlock_matrix": [
+      [
+        1.0
+      ]
+    ], 
+    "marked_traps": [], 
+    "structural_liveness": true, 
+    "free_choice": true, 
+    "asymmetric": true, 
+    "Ax_ineq_sol": [], 
+    "state_machine": true, 
+    "s_invariants": [
+      [
+        1
+      ]
+    ], 
+    "repeatable": "fully", 
+    "AT_rank": 0, 
+    "marked_graph": true, 
+    "deadlocks": [
+      [
+        1
+      ]
+    ], 
+    "trap_matrix": [
+      [
+        1.0
+      ]
+    ], 
+    "traps": [
+      [
+        1
+      ]
+    ], 
+    "incidence_matrix": [
+      [
+        0.0
+      ]
+    ], 
+    "liveness": false, 
+    "uncovered_deadlocks": [
+      [
+        1
+      ]
+    ], 
+    "bounded_by_s": true, 
+    "s_uncovered": [], 
+    "consistency": "fully", 
+    "t_invariants": [
+      [
+        1
+      ]
+    ], 
+    "structural_boundedness": true
+  }
+}

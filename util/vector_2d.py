@@ -58,7 +58,12 @@ def ccw(A,B,C):
 def line_intersects_line(A,B,C,D):
         return ccw(A,C,D) != ccw(B,C,D) and ccw(A,B,C) != ccw(A,B,D)
 
-
+def rectangles_intersect(rect1, rect2):
+    """ Detects, whtether one rectangles intersects with another (including their square) """
+    l1, t1, r1, b1 = rect1
+    l2, t2, r2, b2 = rect2
+    separate = r1 < l2 or l1 > r2 or t1>b2 or b1<t2
+    return not separate 
 
  
 class Vec2d(object):

@@ -1,0 +1,1 @@
+{"transitions": [{"pos_x": 189, "pos_y": 114, "input_arcs": [], "height": 40, "width": 15, "output_arcs": [], "label": {"diff_x": -8, "diff_y": -20}, "unique_id": "t1"}], "places": [{"pos_x": 119, "pos_y": 70, "label": {"diff_x": -14, "diff_y": -14}, "tokens": 0, "radius": 14, "unique_id": "p1"}]}

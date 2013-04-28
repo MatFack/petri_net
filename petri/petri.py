@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import json
-from serializable import Serializable, RequiredException
+from util.serializable import Serializable, RequiredException
 from timeit import itertools
 
     
@@ -43,6 +43,9 @@ class Arc(Serializable):
         
     def restore(self):
         self.transition.add_arc(self)
+        
+    def post_restore(self):
+        pass
 
     @property
     def is_input_arc(self):
@@ -133,6 +136,9 @@ class Transition(Serializable):
         
     def restore(self):
         self.net.add_transition(self)
+        
+    def post_restore(self):
+        pass
     
     def fire(self):
         """
@@ -201,6 +207,9 @@ class Place(Serializable):
         
     def restore(self):
         self.net.add_place(self)
+        
+    def post_restore(self):
+        pass
         
     def get_arcs(self):
         for transition in self.net.get_transitions():
@@ -428,7 +437,7 @@ if __name__=='__main__':
     """)
     
     print net1.to_string()
-    1/0
+    
     p = net1.to_json_struct()
     
     print format(net1)
@@ -437,9 +446,9 @@ if __name__=='__main__':
     
     a = format(net1)
     b = format(net2)
-    print a
+    print [a]
     print '################################'
-    print b
+    print [b]
     print a==b
     
     
