@@ -31,9 +31,9 @@
 
 from objects_canvas.strategy import Strategy
 from objects_canvas.move_strategy import MoveAndSelectStrategy
-
+import traceback
 import json
-from petri import petri
+from petri import petri, reachability_graph
 import wx
 import wx.aui
 import wx.lib.buttons
@@ -55,7 +55,8 @@ class SimulateStrategy(Strategy):
             if obj.is_enabled:
                 obj.fire()
                 self.panel.Refresh()
-                print self.panel.petri.get_state()
+                self.panel.on_petri_changed()
+                #print self.panel.petri.get_state()
 
 class Buffer(object):
     def __init__(self):
@@ -186,7 +187,11 @@ class Example(wx.Frame):
         layoutMenu = wx.Menu()
         self.automatic_layout_item = layoutMenu.Append(wx.NewId(), '&Automatic layout', 'Automatic layout of current net')
         menubar.Append(layoutMenu, '&Layout')
-        #analysisMenu = wx.Menu()
+        analysisMenu = wx.Menu()
+        self.reachability_graph_item = analysisMenu.Append(wx.NewId(), '&Reachability graph', 'Generate reachability graph of current net')
+        menubar.Append(analysisMenu, '&Analysis')
+        
+        self.CreateStatusBar()
         
         self.SetMenuBar(menubar)
         # Menu bindings
@@ -215,6 +220,9 @@ class Example(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnZoomRestore, self.zoom_restore_item)
         # Layout
         self.Bind(wx.EVT_MENU, self.OnKKLayout, self.automatic_layout_item)
+        # Analysis
+        self.Bind(wx.EVT_MENU, self.OnReachabilityGraph, self.reachability_graph_item)
+        
         # Bind close
         self.Bind(wx.EVT_CLOSE, self.OnQuit)
         # Button bitmaps
@@ -254,6 +262,12 @@ class Example(wx.Frame):
         self.Centre() 
         self.Show()
         
+    def OnReachabilityGraph(self, event):        
+        from stategraph import graph_frame
+        gf = graph_frame.GraphFrame(self, petri_panel=self.petri_panel, title='Reachability graph of %s'%self.petri_panel.GetName())
+        gf.Show()
+        
+        
     def OnZoomIn(self, event):
         self.petri_panel.zoom_in()
         
@@ -265,6 +279,9 @@ class Example(wx.Frame):
         
     def create_new_panel(self):
         return petrigui.petri_panel.PetriPanel(self.tabs, frame=self, clip_buffer=self.clip_buffer)
+        
+    def on_state_changed(self):
+        self.SetStatusText(str(self.petri_panel.petri.get_state()))
         
     def add_new_page(self):
         petri_panel = self.create_new_panel()
@@ -339,6 +356,7 @@ class Example(wx.Frame):
         if self.tabs.GetPageCount():
             tab_name = self.petri_panel.get_name()
             self.tabs.SetPageText(self.tabs.Selection, tab_name)
+            
         
     def refresh_undo_redo(self):
         enable = True
@@ -420,8 +438,13 @@ class Example(wx.Frame):
     def OnSaveAs(self, event):
         self.save_as(JSONFormat)
         
-    def OnPageChanged(self, event):
+    def on_command_append(self):
         self.update_menu()
+        
+    def OnPageChanged(self, event):
+        print "Page changed"
+        self.update_menu()
+        self.on_state_changed()
         self.petri_panel.SetFocus()
         
     def OnRedo(self, event):

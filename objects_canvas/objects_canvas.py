@@ -7,7 +7,8 @@ from util import constants
 
 class ObjectsCanvas(wx.ScrolledWindow):
     def __init__(self, parent, frame, **kwargs):
-        """ Constructor must be called after objects_container is set!!! """
+        """ Constructor must be called after objects_container is set!!!
+        Because of notebook wanting itself to be parent, we pass frame as another variable """
         super(ObjectsCanvas, self).__init__(parent, **kwargs)
         self.frame = frame
         self.SetDoubleBuffered(True)
@@ -125,7 +126,7 @@ class ObjectsCanvas(wx.ScrolledWindow):
         if command.does_nothing:
             return
         self.commands = self.commands.add_command(command)
-        self.frame.update_menu()
+        self.frame.on_command_append()
         
     def update_frame_menu(self):
         self.frame.update_menu()
@@ -313,15 +314,16 @@ class ObjectsCanvas(wx.ScrolledWindow):
         
     def screen_to_canvas_coordinates(self, point):
         x, y = point
+        vx, vy = self.view_point
         x = x / self.zoom
         y = y / self.zoom
-        return (x+self.view_point[0], y+self.view_point[1])
+        return (x+vx, y+vy)
     
     def canvas_to_screen_coordinates(self, point):
         x, y = point
-        x = x * self.zoom
-        y = y * self.zoom
-        return (x-self.view_point[0], y-self.view_point[1])
+        x = (x - self.view_point[0])*self.zoom
+        y = (y - self.view_point[1])*self.zoom
+        return (x, y)
             
     def draw(self, dc, w, h):
         for obj in self.get_objects_iter():

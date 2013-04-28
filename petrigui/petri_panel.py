@@ -10,7 +10,7 @@ from commands.create_delete_command import CreateDeleteObjectCommand
 class PetriPanel(ObjectsCanvas):
     def __init__(self, parent, frame, clip_buffer, **kwargs):
         self.petri = GUIPetriNet()
-        super(PetriPanel, self).__init__(parent, frame, **kwargs)
+        super(PetriPanel, self).__init__(parent, frame=frame, **kwargs)
         self.SetName("Petri net")
         self.clip_buffer = clip_buffer
     
@@ -119,6 +119,9 @@ class PetriPanel(ObjectsCanvas):
         self.append_command(command)
         self.update_bounds()
         self.Refresh()
+        
+    def on_petri_changed(self):
+        self.frame.on_state_changed()
         
     def on_delete(self):
         if not self.strategy.selection:

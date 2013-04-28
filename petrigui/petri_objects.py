@@ -2,7 +2,7 @@
 
 import itertools
 
-from object_mixins import MenuMixin, SelectionMixin, PositionMixin
+from objects_canvas.object_mixins import MenuMixin, SelectionMixin, PositionMixin
 from object_label import ObjectLabel
 import util.constants
 from petri import petri

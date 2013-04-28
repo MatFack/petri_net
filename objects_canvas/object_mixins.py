@@ -48,7 +48,6 @@ class SelectionMixin(object):
     def is_selected(self):
         return False if self.temporary_discarded else self.selected or self.temporary_selected
     
-    
     def is_selectable(self):
         return True
         

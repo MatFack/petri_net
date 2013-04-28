@@ -5,7 +5,7 @@ from pprint import pprint
 import igraph
 # This is prototype, no premature optimisation please
 
-DEBUG = True
+DEBUG = False
 
 def spec_add(a, b):
     if a == 'w' or b=='w':
@@ -75,10 +75,12 @@ class ReachabilityGraph(object):
         cur_path = collections.deque()
         while stack:
             state, level = stack.pop()
+            if state in self.explored:
+                continue
             while cur_path and cur_path[-1][-1] >= level:
                 cur_path.pop()
             cur_path.append((state, level))
-            self.names[state] = 'S%d %r'%(len(self.names)+1, state)
+            self.names[state] = 'S%d'%(len(self.names)+1)
             neighbours = {}
             self.explored[state] = neighbours
             for trans_name, (move, req) in self.transition_moves.iteritems():
@@ -115,7 +117,7 @@ class ReachabilityGraph(object):
 if __name__ == '__main__':
     import json
     import petri
-    with open('examples/pots.json','rb') as f:
+    with open('../examples/pots.json','rb') as f:
         net = petri.PetriNet.from_json_struct(json.load(f))
     r = ReachabilityGraph(net)
     r.explore(net.get_state())

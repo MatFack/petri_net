@@ -1,5 +1,5 @@
 
-from object_mixins import SelectionMixin, PositionMixin
+from objects_canvas.object_mixins import SelectionMixin, PositionMixin
 
 
 from util import serializable
