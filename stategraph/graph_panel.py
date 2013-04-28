@@ -190,12 +190,16 @@ class GraphPanel(ObjectsCanvas):
                 state_to_name = names[state_to]
                 self.graph.add_edge(state_name, state_to_name, edge_label)
         self.graph.automatic_layout()
+        self.update_bounds()
         self.Refresh()
         
     petri = property(fget=__graph_get, fset=__graph_set)
     
     def set_temporary_state(self, marking):
         self.GetParent().set_temporary_state(marking)
+    
+    def get_selection(self):
+        return self.strategy.selection
     
     def get_objects_iter(self):
         for vertex in self.graph.get_vertices():

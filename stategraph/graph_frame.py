@@ -23,17 +23,32 @@ class GraphFrame(wx.Frame):
         from_sizer.Add(wx.StaticText(self, label='From state'), flag=wx.CENTER | wx.ALL, border=5)
         self.from_text = wx.TextCtrl(self)
         from_sizer.Add(self.from_text, flag=wx.ALL|wx.EXPAND, proportion=1)
+        self.from_add_button = wx.Button(self, id=wx.ID_ANY, label='Set selected')
+        self.from_add_button.Disable()
+        from_clear_button = wx.Button(self, id=wx.ID_ANY, label='Clear')
+        from_clear_button.Bind(wx.EVT_BUTTON, lambda event:self.from_text.SetValue(''))
+        from_sizer.Add(self.from_add_button)
+        from_sizer.Add(from_clear_button)
+
         sizer.Add(from_sizer, flag=wx.EXPAND|wx.ALL, border=2)
         # To
         to_sizer = wx.BoxSizer(wx.HORIZONTAL)
         to_sizer.Add(wx.StaticText(self, label='To states'), flag=wx.CENTER | wx.ALL, border=5)
         self.to_text = wx.TextCtrl(self)
         to_sizer.Add(self.to_text, flag=wx.ALL|wx.EXPAND, proportion=1)
+        self.to_add_button = wx.Button(self, id=wx.ID_ANY, label='Add selected')
+        self.to_add_button.Disable()
+        to_clear_button = wx.Button(self, id=wx.ID_ANY, label='Clear')
+        to_clear_button.Bind(wx.EVT_BUTTON, lambda event:self.to_text.SetValue(''))
+        to_sizer.Add(self.to_add_button)
+        to_sizer.Add(to_clear_button)
         sizer.Add(to_sizer, flag=wx.EXPAND)
+        # Analyze button
         self.analyze_btn = wx.Button(self, id=wx.ID_ANY, label="Analyze")
         self.analyze_btn.Disable()
-        self.analyze_result = wx.TextCtrl(self, size=(-1,70), style=wx.TE_MULTILINE)
         sizer.Add(self.analyze_btn)
+        # Result
+        self.analyze_result = wx.TextCtrl(self, size=(-1,70), style=wx.TE_MULTILINE)
         sizer.Add(self.analyze_result, flag=wx.EXPAND|wx.ALL, border=2)
         self.SetSizer(sizer)
         self.petri_panel = petri_panel
@@ -67,7 +82,22 @@ class GraphFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnZoomRestore, self.zoom_restore_item)
         # Buttons bindings
         self.generate_button.Bind(wx.EVT_BUTTON, self.OnGenerateGraph)
+        self.from_add_button.Bind(wx.EVT_BUTTON, self.OnFromAdd)
+        self.to_add_button.Bind(wx.EVT_BUTTON, self.OnToAdd)
         self.analyze_btn.Bind(wx.EVT_BUTTON, self.OnAnalyze)
+        
+    def OnFromAdd(self, event):
+        selection = self.graph_panel.get_selection()
+        if len(selection)==1:
+            for obj in selection:
+                self.from_text.SetValue(obj.unique_id)
+    
+    def OnToAdd(self, event):
+        names_set = set(self.to_text.GetValue().strip().split(','))
+        selection = self.graph_panel.get_selection()
+        for obj in selection:
+            names_set.add(obj.unique_id)
+        self.to_text.SetValue(','.join(name for name in names_set if name))
         
     def set_temporary_state(self, marking):
         self.petri_panel.set_temporary_state(marking)
@@ -104,6 +134,8 @@ class GraphFrame(wx.Frame):
         self.rg.explore(net.get_state())
         self.graph_panel.set_graph(self.rg.explored, self.rg.names)
         self.analyze_btn.Enable()
+        self.from_add_button.Enable()
+        self.to_add_button.Enable()
 
         
     def OnUndo(self, event):
