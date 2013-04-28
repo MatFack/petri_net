@@ -5,6 +5,8 @@ from smart_dc import SmartDC
 from commands.command import Command
 from util import constants
 
+# TODO: Add compressing (zoom without changing objects size)
+
 class ObjectsCanvas(wx.ScrolledWindow):
     def __init__(self, parent, frame, **kwargs):
         """ Constructor must be called after objects_container is set!!!

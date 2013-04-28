@@ -105,17 +105,17 @@ class GraphFrame(wx.Frame):
     def OnAnalyze(self, event):
         names = self.rg.names
         reverse_names = {v:k for k,v in names.iteritems()}
-        fr = self.from_text.GetValue().strip()
-        fr_state = reverse_names.get(fr, None)
-        if fr is None:
-            wx.MessageBox('Unknown state: %s'%fr)
+        fr_name = self.from_text.GetValue().strip()
+        fr_state = reverse_names.get(fr_name, None)
+        if fr_state is None:
+            wx.MessageBox('Unknown state: %s'%fr_name)
             return
         to = self.to_text.GetValue().strip()
         to_states = []
         for to_name in to.split(','):
             to_state = reverse_names.get(to_name, None)
             if to_state is None:
-                wx.MessageBox('Unknown state: %s'%to_state)
+                wx.MessageBox('Unknown state: %s'%to_name)
                 return
             to_states.append(to_state)
         result = petri.dfa_analysis.make_regex(fr_state, to_states, self.rg.explored)

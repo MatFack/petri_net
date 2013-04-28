@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-import tss
+import petri.tss as tss
 import itertools
 import collections
   
@@ -345,7 +345,7 @@ class PetriProperties(object):
             tr_rows += len(transition.input_arcs)
         
         empty_or_second_none = lambda x:not x or x[1]
-        print self.place_input_arcs
+        #print self.place_input_arcs
         #- place_input
         places_without_input = [place for place in places if not self.place_input_arcs[place]]
         
@@ -562,7 +562,7 @@ if __name__=='__main__':
     import sys
     if os.name is 'nt':
         import win32_unicode_argv
-    import petri
+    import petri.petri
     import argparse
     import json
     import traceback
@@ -608,9 +608,9 @@ if __name__=='__main__':
                 data = f.read()
             if args.format == JSON_FORMAT:
                 data = json.loads(data)
-                net = petri.PetriNet.from_json_struct(data)
+                net = petri.petri.PetriNet.from_json_struct(data)
             elif args.format == TEXT_FORMAT:
-                net = petri.PetriNet.from_string(data)
+                net = petri.petri.PetriNet.from_string(data)
                 
             props = PetriProperties(net)
             were_errors = props._process_properties(args.properties.split(','))
