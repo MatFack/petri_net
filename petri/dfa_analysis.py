@@ -93,7 +93,10 @@ def make_regex(start, finish, graph):
     new_new_graph = {}
     for vv in new_graph:
         for bb,toto in new_graph[vv]:
-            new_new_graph[(vv, toto)] = bb
+            val = new_new_graph.get((vv, toto), '')
+            if val: val+= '|'
+            val += bb
+            new_new_graph[(vv, toto)] = val
     start = nv[start]
     new_fin = [nv[fin] for fin in finish]
     cache = {}
