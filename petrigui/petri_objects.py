@@ -9,15 +9,10 @@ from petri import petri
 import wx
 import collections
 import util.vector_2d as vec2d
+import util.drawing
 from properties_dialog import ElementPropertiesDialog, DialogFields, place_ranged
 from util import constants, serializable
 from commands.create_delete_command import CreateDeleteObjectCommand
-
-
-def draw_text(dc, text, center_x, center_y):
-    """ Draws text, given text center """
-    tw, th = dc.GetTextExtent(text)
-    dc.DrawText(text, (center_x-tw/2),  (center_y-th/2))
 
 
 class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
@@ -32,15 +27,30 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
         """
         super(GUIPlace, self).__init__(net=net, unique_id=unique_id, tokens=tokens)
         self.radius = 14
+        self._tokens = tokens
         self.label = ObjectLabel(self, -self.radius, -self.radius)
+        self.temporary_tokens = None
         if position:
             self.set_position(*position)
+            
+    def set_temporary_tokens(self, tokens):
+        self.temporary_tokens = tokens
            
     def label_to_json_struct(self, **kwargs):
         return self.label.to_json_struct(**kwargs)
     
     def label_from_json_struct(self, label_obj, **kwargs):
         return ObjectLabel.from_json_struct(label_obj, constructor_args=dict(obj=self), **kwargs)
+           
+    def __get_tokens(self):
+        if self.temporary_tokens is not None:
+            return self.temporary_tokens
+        return self._tokens
+    
+    def __set_tokens(self, value):
+        self._tokens = value
+        
+    tokens = property(fget=__get_tokens, fset=__set_tokens)
            
     def draw(self, dc, zoom):
         if self.is_selected:
@@ -49,31 +59,40 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
             dc.SetPen(wx.BLACK_PEN)
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawCircle(self.pos_x, self.pos_y, self.radius)
-        if self.tokens>4:
-            draw_text(dc, str(self.tokens), self.pos_x, self.pos_y)
-        elif self.tokens>0:
-            self.draw_tokens(dc)    
+        tokens = self.tokens
+
+        if isinstance(tokens, basestring) or tokens>4:
+            if self.temporary_tokens is not None:
+                dc.SetPen(constants.BLUE_PEN)
+            else:
+                dc.SetPen(wx.BLACK_PEN)
+            util.drawing.draw_text(dc, str(tokens), self.pos_x, self.pos_y)
+        elif tokens>0:
+            self.draw_tokens(dc, tokens)    
             
     def get_topleft_position(self):
         x, y = self.get_position()
         return x-self.radius, y-self.radius
                 
-    def draw_tokens(self, dc):
+    def draw_tokens(self, dc, tokens):
         #This sucks, but who cares
-        dc.SetBrush(wx.BLACK_BRUSH)
+        if self.temporary_tokens is not None:
+            dc.SetBrush(wx.BLUE_BRUSH)
+        else:
+            dc.SetBrush(wx.BLACK_BRUSH)
         dc.SetPen(wx.BLACK_PEN)
         tokens_r = self.radius/3
         tokens_offset = self.radius/2.8
-        if self.tokens==1:
+        if tokens==1:
             dc.DrawCircle(self.pos_x, self.pos_y, tokens_r)
-        elif self.tokens==2:
+        elif tokens==2:
             dc.DrawCircle(self.pos_x-tokens_offset, self.pos_y, tokens_r)
             dc.DrawCircle(self.pos_x + tokens_offset, self.pos_y, tokens_r)
-        elif self.tokens==3:
+        elif tokens==3:
             dc.DrawCircle(self.pos_x-tokens_offset, self.pos_y+tokens_r, tokens_r)
             dc.DrawCircle(self.pos_x + tokens_offset, self.pos_y+tokens_r, tokens_r)
             dc.DrawCircle(self.pos_x, self.pos_y-tokens_r, tokens_r)
-        elif self.tokens==4:
+        elif tokens==4:
             for x_diff in xrange(0,2):
                 x_diff = (x_diff*2-1)*tokens_offset
                 for y_diff in xrange(0,2):
@@ -217,7 +236,7 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
             self.draw_segment(dc, fr, to)
             fr_begin = fr
         fr_begin = vec2d.Vec2d(fr_begin)
-        self.draw_arrow(dc, fr_begin, to_end)
+        util.drawing.draw_arrow(dc, fr_begin, to_end, self.tail_angle, self.tail_length)
         if abs(self.weight)>1:
             self.draw_label(dc)
             
@@ -228,7 +247,7 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         label_y = point[1]
         tw,th = dc.GetTextExtent(label)
         label_vec_perp = direction.perpendicular_normal()*max(th,tw)*0.8
-        draw_text(dc, label, label_x+label_vec_perp[0], label_y+label_vec_perp[1])
+        util.drawing.draw_text(dc, label, label_x+label_vec_perp[0], label_y+label_vec_perp[1])
         
     def get_center(self):
         length = 0.
@@ -252,16 +271,7 @@ class GUIArc(SelectionMixin, PositionMixin, MenuMixin, petri.Arc): #PositionMixi
         x2, y2 = to[0], to[1]
         self.select_line_pen(dc)
         dc.DrawLine(x1, y1, x2, y2)
-        
-    def draw_arrow(self, dc, fr, to):
-        end_x, end_y = to[0], to[1]
-        vec = -(to - fr)
-        vec = vec.normalized()
-        tail_1 = vec.rotated(self.tail_angle) * self.tail_length
-        tail_2 = vec.rotated(-self.tail_angle) * self.tail_length
-        dc.DrawLine(end_x, end_y, end_x+tail_1[0], end_y+tail_1[1])
-        dc.DrawLine(end_x, end_y, end_x+tail_2[0], end_y+tail_2[1])
-        
+                
     def get_point_next_to(self, obj):
         index = 0 if self.weight>0 else -1
         if obj==self.place:

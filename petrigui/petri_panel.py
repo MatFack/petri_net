@@ -4,6 +4,7 @@ from petri_objects import GUIPetriNet
 from collections import deque
 from petri import petri
 import itertools
+import wx
 
 from commands.create_delete_command import CreateDeleteObjectCommand
 
@@ -13,6 +14,10 @@ class PetriPanel(ObjectsCanvas):
         super(PetriPanel, self).__init__(parent, frame=frame, **kwargs)
         self.SetName("Petri net")
         self.clip_buffer = clip_buffer
+        self.Bind(wx.EVT_SET_FOCUS, self.OnSetFocus)
+        
+    def OnSetFocus(self, event):
+        self.set_temporary_state(None)
     
     def __petri_get(self):
         return self.objects_container
@@ -21,6 +26,15 @@ class PetriPanel(ObjectsCanvas):
         self.objects_container = value
         
     petri = property(fget=__petri_get, fset=__petri_set)
+    
+    def set_temporary_state(self, marking):
+        if marking:
+            for place, token in zip(self.petri.get_sorted_places(), marking):
+                place.set_temporary_tokens(token)
+        else:
+            for place in self.petri.get_sorted_places():
+                place.set_temporary_tokens(None)
+        self.Refresh()
     
     def get_objects_iter(self):
         for place in self.petri.get_places_iter():

@@ -2,6 +2,7 @@
 import wx
 import igraph
 import util.vector_2d as vec2d
+import util.drawing
 import util.constants as constants
 from objects_canvas.objects_canvas import ObjectsCanvas
 from objects_canvas.object_mixins import PositionMixin, SelectionMixin
@@ -12,11 +13,13 @@ class Edge(PositionMixin, SelectionMixin):
         self.v1 = v1
         self.v2 = v2
         self.labels = []
+        self.label_text = ''
         if label is not None:
             self.add_label(label)
         
     def add_label(self, label):
         self.labels.append(label)
+        self.label_text = ','.join(self.labels)
         
     def is_selectable(self):
         return False
@@ -28,7 +31,31 @@ class Edge(PositionMixin, SelectionMixin):
         fx, fy = self.v1.get_position()
         tx, ty = self.v2.get_position()
         dc.SetPen(wx.BLACK_PEN)
-        dc.DrawLine(fx, fy, tx, ty)
+        # True if there is also and edge from v2 to v1
+        double_directed = self.v1.edges_from.get(self.v2, None) is not None
+        cx, cy = (fx+tx)/2, (fy+ty)/2
+        angle = abs(vec2d.Vec2d(tx-fx, ty-fy).angle)
+        if not double_directed:
+            dc.DrawLine(fx, fy, tx, ty)
+        else:
+            perp_x, perp_y = -(ty-fy), tx-fx
+            normal = (perp_x**2 + perp_y**2)**0.5
+            if normal:
+                perp_x /= normal
+                perp_y /= normal
+                cx+=perp_x*20
+                cy+=perp_y*20
+            else:
+                cx+=30
+                cy+=30  
+            dc.DrawLine(fx, fy, cx, cy)          
+            dc.DrawLine(cx, cy, tx, ty)
+        fr, to = vec2d.Vec2d(cx, cy), vec2d.Vec2d(tx, ty)
+        direction = to-fr
+        to -= direction.normalized()*self.v2.radius
+        util.drawing.draw_arrow(dc, fr, to, 15, 10)
+        dc.DrawText(self.label_text, cx, cy)
+        
         
     def contains_point(self, x, y):
         return False
@@ -37,9 +64,10 @@ class Edge(PositionMixin, SelectionMixin):
         return False
         
 class Vertex(PositionMixin, SelectionMixin):
-    def __init__(self, unique_id):
+    def __init__(self, unique_id, marking):
         super(Vertex, self).__init__()
         self.unique_id = unique_id
+        self.marking = marking
         self.radius = 20
         self.edges_from = {}
         self.edges_to = {}
@@ -52,6 +80,7 @@ class Vertex(PositionMixin, SelectionMixin):
         else:
             dc.SetPen(wx.BLACK_PEN)
         dc.DrawCircle(x, y, self.radius)
+        util.drawing.draw_text(dc, self.unique_id, x, y)
         
     def in_rect(self, lx, ly, tx, ty):
         r = self.radius
@@ -63,6 +92,9 @@ class Vertex(PositionMixin, SelectionMixin):
         pos_x, pos_y = self.get_position()
         return (x - pos_x)**2 + (y - pos_y)**2 <= self.radius**2
     
+    def open_properties_dialog(self, panel):
+        panel.set_temporary_state(self.marking)
+
 
 class Graph(object):
     def __init__(self):
@@ -125,8 +157,8 @@ class Graph(object):
             
         bbox = layout.bounding_box()
         layout.translate((-bbox.left, -bbox.top))
-        if dist!=0:
-            layout.scale(150/dist)
+        if max_dist!=0:
+            layout.scale(200/max_dist)
         for obj, pos in zip(objects_lst, layout):
             x,y = pos
             obj.set_position(x+constants.RIGHT_OFFSET*3,y+constants.BOTTOM_OFFSET*3)
@@ -150,7 +182,7 @@ class GraphPanel(ObjectsCanvas):
         print names
         for state in states:
             print "Adding", state, names[state]
-            vertex = Vertex(names[state])
+            vertex = Vertex(names[state], state)
             self.graph.add_vertex(vertex)
         for state, neighbours in states.iteritems():
             state_name = names[state]
@@ -161,6 +193,9 @@ class GraphPanel(ObjectsCanvas):
         self.Refresh()
         
     petri = property(fget=__graph_get, fset=__graph_set)
+    
+    def set_temporary_state(self, marking):
+        self.GetParent().set_temporary_state(marking)
     
     def get_objects_iter(self):
         for vertex in self.graph.get_vertices():

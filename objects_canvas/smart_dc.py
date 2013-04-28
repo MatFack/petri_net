@@ -41,3 +41,9 @@ class SmartDC(wx.BufferedPaintDC):
         self._update_font_size()
         x, y = self.panel.canvas_to_screen_coordinates((x, y))
         return super(SmartDC, self).DrawText(text, x, y)
+    
+    def DrawRotatedText(self, text, x, y, angle):
+        self._update_font_size()
+        x, y = self.panel.canvas_to_screen_coordinates((x, y))
+        return super(SmartDC, self).DrawRotatedText(text, x, y, angle)
+

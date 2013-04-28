@@ -5,18 +5,36 @@ import wx
 from objects_canvas.move_strategy import MoveAndSelectStrategy
 from graph_panel import GraphPanel
 import petri.reachability_graph
-
+import petri.dfa_analysis
 
 class GraphFrame(wx.Frame):
     def __init__(self, parent, petri_panel=None, **kwargs):
         super(GraphFrame, self).__init__(parent, **kwargs)
         self.SetSize((500,600))
+        self.rg = None
         self.strategy =  MoveAndSelectStrategy(self.panel_getter)
         self.graph_panel = GraphPanel(self, frame=self)
         self.generate_button = wx.Button(self, id=wx.ID_ANY, label="Generate reachability graph")
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(self.graph_panel, proportion=1, flag=wx.ALL | wx.EXPAND, border=2)
         sizer.Add(self.generate_button)
+        # From
+        from_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        from_sizer.Add(wx.StaticText(self, label='From state'), flag=wx.CENTER | wx.ALL, border=5)
+        self.from_text = wx.TextCtrl(self)
+        from_sizer.Add(self.from_text, flag=wx.ALL|wx.EXPAND, proportion=1)
+        sizer.Add(from_sizer, flag=wx.EXPAND|wx.ALL, border=2)
+        # To
+        to_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        to_sizer.Add(wx.StaticText(self, label='To states'), flag=wx.CENTER | wx.ALL, border=5)
+        self.to_text = wx.TextCtrl(self)
+        to_sizer.Add(self.to_text, flag=wx.ALL|wx.EXPAND, proportion=1)
+        sizer.Add(to_sizer, flag=wx.EXPAND)
+        self.analyze_btn = wx.Button(self, id=wx.ID_ANY, label="Analyze")
+        self.analyze_btn.Disable()
+        self.analyze_result = wx.TextCtrl(self, size=(-1,70), style=wx.TE_MULTILINE)
+        sizer.Add(self.analyze_btn)
+        sizer.Add(self.analyze_result, flag=wx.EXPAND|wx.ALL, border=2)
         self.SetSizer(sizer)
         self.petri_panel = petri_panel
         self.setup_menu()
@@ -49,15 +67,43 @@ class GraphFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnZoomRestore, self.zoom_restore_item)
         # Buttons bindings
         self.generate_button.Bind(wx.EVT_BUTTON, self.OnGenerateGraph)
+        self.analyze_btn.Bind(wx.EVT_BUTTON, self.OnAnalyze)
+        
+    def set_temporary_state(self, marking):
+        self.petri_panel.set_temporary_state(marking)
+        
+    def OnAnalyze(self, event):
+        names = self.rg.names
+        reverse_names = {v:k for k,v in names.iteritems()}
+        fr = self.from_text.GetValue().strip()
+        fr_state = reverse_names.get(fr, None)
+        if fr is None:
+            wx.MessageBox('Unknown state: %s'%fr)
+            return
+        to = self.to_text.GetValue().strip()
+        to_states = []
+        for to_name in to.split(','):
+            to_state = reverse_names.get(to_name, None)
+            if to_state is None:
+                wx.MessageBox('Unknown state: %s'%to_state)
+                return
+            to_states.append(to_state)
+        result = petri.dfa_analysis.make_regex(fr_state, to_states, self.rg.explored)
+        print fr_state, to_states, self.rg.explored
+        self.analyze_result.SetValue(result)
+        
+        
+        
         
     def OnGenerateGraph(self, event):
         net = self.petri_panel.petri
-        rg = petri.reachability_graph.ReachabilityGraph(net)
+        self.rg = petri.reachability_graph.ReachabilityGraph(net)
         if not net.get_state():
             wx.MessageBox('Petri net is empty!')
             return
-        rg.explore(net.get_state())
-        self.graph_panel.set_graph(rg.explored, rg.names)
+        self.rg.explore(net.get_state())
+        self.graph_panel.set_graph(self.rg.explored, self.rg.names)
+        self.analyze_btn.Enable()
 
         
     def OnUndo(self, event):
