@@ -10,7 +10,7 @@
 # DONE: Make coordinates in buffer relative,
 # DONE: Cut - creates Delete command, puts selected into Buffer
 # DONE: Paste - creates Create command, puts there objects from Buffer
-# Test
+# Test test test
 
 # DONE: Tabs
 # TODO: Put properties somewhere, (menu - analysis - tabbed window)
