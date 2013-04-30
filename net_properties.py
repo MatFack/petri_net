@@ -561,7 +561,7 @@ if __name__=='__main__':
     import os
     import sys
     if os.name is 'nt':
-        import win32_unicode_argv
+        import util.win32_unicode_argv
     import petri.petri
     import argparse
     import json
