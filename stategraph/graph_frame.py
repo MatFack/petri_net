@@ -6,6 +6,7 @@ from objects_canvas.move_strategy import MoveAndSelectStrategy
 from graph_panel import GraphPanel
 import petri.reachability_graph
 import petri.dfa_analysis
+import traceback
 
 class GraphFrame(wx.Frame):
     def __init__(self, parent, petri_panel=None, **kwargs):
@@ -120,10 +121,20 @@ class GraphFrame(wx.Frame):
             to_states.append(to_state)
         result = petri.dfa_analysis.make_regex(fr_state, to_states, self.rg.explored)
         print fr_state, to_states, self.rg.explored
-        self.analyze_result.SetValue(result)
-        
-        
-        
+        if len(result)<50000:
+            self.analyze_result.SetValue(result)
+        wx.MessageBox('The resulting string is too large, please select a file to save it')
+        dlg = wx.FileDialog(self, message='Save result as...', wildcard='Text file|*.txt|All files|*',style=wx.SAVE)
+        if dlg.ShowModal() == wx.ID_OK:
+            path = dlg.GetPath()
+            try:
+                with open(path, 'wb') as f:
+                    f.write(result)
+            except Exception, ex:
+                wx.MessageBox("Failed to save to file: "+traceback.format_exc())
+            else:
+                self.analyze_result.SetValue("Saved %d bytes to %s"%(len(result),path))
+                    
         
     def OnGenerateGraph(self, event):
         net = self.petri_panel.petri

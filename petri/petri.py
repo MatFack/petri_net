@@ -4,6 +4,11 @@ import json
 from util.serializable import Serializable, RequiredException
 from timeit import itertools
 
+def _special_sort(lst):
+    """ Sorts lst IN PLACE and returns it"""
+    lst.sort()
+    lst.sort(key=len)
+    return lst
     
 class Arc(Serializable):
     """
@@ -284,12 +289,12 @@ class PetriNet(Serializable):
         
     def get_sorted_places(self):
         if self.cached_sorted_places is None:
-            self.cached_sorted_places = [self.places[key] for key in sorted(self.places.keys())]
+            self.cached_sorted_places = [self.places[key] for key in _special_sort(self.places.keys())]
         return self.cached_sorted_places
     
     def get_sorted_transitions(self):
         if self.cached_sorted_transitions is None:
-            self.cached_sorted_transitions = [self.transitions[key] for key in sorted(self.transitions.keys())]
+            self.cached_sorted_transitions = [self.transitions[key] for key in _special_sort(self.transitions.keys())]
         return self.cached_sorted_transitions
     
     def get_state(self):

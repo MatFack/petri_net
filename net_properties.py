@@ -64,7 +64,9 @@ class PetriProperties(object):
         self._ignored_fields = {'place_input_arcs', 'place_output_arcs','place_input_transitions', 'place_output_transitions'}
         self._reset()
         
-    def _reset(self):
+    def _reset(self, net=None):
+        if net is not None:
+            self._net = net
         self.incidence_matrix = None
         self.Ax_ineq_sol = None
         self.t_invariants = None
@@ -471,6 +473,7 @@ class PetriProperties(object):
         #- place_output
         for place in self._net.get_places_iter():
             if not(sum_weight(self.place_input_arcs[place]) == sum_weight(self.place_output_arcs[place]) <= 1):
+                print "HELL WRONG"
                 result = False
                 break
     
@@ -506,6 +509,7 @@ class PetriProperties(object):
     def _compute_free_choice(self):
         #+ free_choice
         self.free_choice = self._check_output_place_property(lambda poa1, poa2, pot1, pot2:sum_weight(poa1)==sum_weight(poa2)<=1)
+        print self.free_choice
         
     def _compute_extended_free_choice(self):
         #+ extended_free_choice

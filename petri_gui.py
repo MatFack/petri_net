@@ -29,7 +29,7 @@
 
 
 # Well, and after paper shit, splitting into chunks and drawing only visible chunks. Later. Fuck paper shit.
-
+import time
 from objects_canvas.strategy import Strategy
 from objects_canvas.move_strategy import MoveAndSelectStrategy
 import traceback
@@ -37,10 +37,13 @@ import json
 from petri import petri, reachability_graph
 import wx
 import wx.aui
+import wx.grid
 import wx.lib.buttons
+import itertools
 import petrigui.add_object_strategy
 import petrigui.petri_objects
 import petrigui.petri_panel
+import net_properties
 
 
     
@@ -134,15 +137,186 @@ class JSONFormat(ImportExportFormat):
     @classmethod
     def import_net(cls, s):
         return petrigui.petri_objects.GUIPetriNet.from_json_struct(json.loads(s))
+  
+# TODO: Well, probably we will have to create some unified interface to all those properties.
+# And also, 
+        
+class GUIProperty(object):
+    def __init__(self, field, properties, **kwargs):
+        self.field = field
+        self.properties = properties
+        self.parent = None
+        
+    def init_ui(self, parent):
+        self.element = self.create_element(parent)
+        self.parent = parent
+        return self.element
+    
+    def create_element(self, parent):
+        raise NotImplementedError
+        
+    def get_value(self):
+        return getattr(self.properties, self.field)
+        
+    def update(self):
+        #setattr(self.properties, self.field, None)
+        value = self.get_value()
+        self.show_to_ui(value)
+        
+    def show_to_ui(self, value):
+        raise NotImplementedError
+    
+class MatrixProperty(GUIProperty):
+    def __init__(self, field, properties, row_label_getter, col_label_getter, **kwargs):
+        super(MatrixProperty, self).__init__(field, properties, **kwargs)
+        self.row_label_getter = row_label_getter
+        self.col_label_getter = col_label_getter
+        
+    def create_element(self, parent):
+        self.__grid = wx.grid.Grid(parent)
+        self.__grid.EnableDragColSize(True)
+        self.__grid.EnableDragRowSize(True)
+        self.__grid.EnableEditing(False)
+        self.__grid.CreateGrid(0,0)
+        return self.__grid
+    
+    def show_to_ui(self, value):
+        matrix = value
+        r,c = matrix.shape
+        rows, cols = self.__grid.GetNumberRows(), self.__grid.GetNumberCols()
+        diff_r = r-rows
+        diff_c = c-cols
+        if diff_r>0:
+            self.__grid.AppendRows(diff_r)
+        elif diff_r<0:
+            self.__grid.DeleteRows(pos=0, numRows=abs(diff_r))
+        if diff_c>0:
+            self.__grid.AppendCols(diff_c)
+        elif diff_c<0:
+            self.__grid.DeleteCols(pos=0, numCols=abs(diff_c))
+        for i, transition in enumerate(self.col_label_getter()):
+            self.__grid.SetColLabelValue(i, transition.unique_id)
+        for i,place in enumerate(self.row_label_getter()):
+            self.__grid.SetRowLabelValue(i, place.unique_id)
+        for i in xrange(r):
+            for j in xrange(c):
+                self.__grid.SetCellValue(i, j, str(int(matrix[i,j])))
+                
+class ValueProperty(GUIProperty):
+    def __init__(self, field, properties, label, **kwargs):
+        super(ValueProperty, self).__init__(field, properties, **kwargs)
+        self.label = label
+        
+    def create_element(self, parent):
+        result = wx.BoxSizer(wx.HORIZONTAL)
+        label_elem = wx.StaticText(parent, label=self.label)
+        self.__value_elem = wx.TextCtrl(parent)
+        self.__value_elem.SetEditable(False)
+        result.Add(label_elem, flag=wx.CENTER)
+        result.Add(self.__value_elem, flag=wx.CENTER, proportion=1)
+        return result
+        
+    def show_to_ui(self, value):
+        self.__value_elem.SetValue(str(value))                
+import wx.lib.scrolledpanel
+class PropertiesTabPanelMixin(object):
+    def __init__(self, parent, petri_panel, properties, properties_lst, **kwargs):
+        scrolled = kwargs.pop('scrolled', False)
+        super(PropertiesTabPanelMixin, self).__init__(parent, **kwargs)
+        self.petri_panel = petri_panel
+        self.properties = properties
+        self.properties_lst = properties_lst
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        update_button = wx.Button(self, id=wx.ID_ANY, label="Update properties")
+        update_button.Bind(wx.EVT_BUTTON, self.OnUpdate)
+        sizer.Add(update_button)
+        if scrolled:
+            additional_sizer = wx.BoxSizer(wx.VERTICAL)
+        else:
+            additional_sizer = sizer
+        for prop in self.properties_lst:
+            element = prop.init_ui(self)
+            additional_sizer.Add(element, flag=wx.EXPAND, proportion=1)
+        if scrolled:
+            sizer.Add(additional_sizer, flag=wx.EXPAND)
+        #sizer.Add(grid, flag=wx.EXPAND, proportion=1)
+        self.SetSizer(sizer)
+        try:
+            self.SetupScrolling()
+        except:
+            pass
+        
+    def OnUpdate(self, event):
+        self.update_properties()
+        
+    def update_properties(self):
+        self.properties._reset(self.petri_panel.petri)
+        for prop in self.properties_lst:
+            prop.update()
+        #self.Layout()
+        #self.Fit()
+        self.Refresh()
+        
+class ScrolledPropertiesTabPanel(PropertiesTabPanelMixin, wx.lib.scrolledpanel.ScrolledPanel):
+    def __init__(self, *args, **kwargs):
+        kwargs['scrolled'] = True
+        super(ScrolledPropertiesTabPanel, self).__init__(*args, **kwargs)
 
+class UsualPropertiesTabPanel(PropertiesTabPanelMixin, wx.Panel):
+    pass
+   
+class PropertiesPanel(wx.Panel):
+    def __init__(self, parent, petri_panel, **kwargs):
+        super(PropertiesPanel, self).__init__(parent, **kwargs)
+        self.petri_panel = petri_panel
+        self.properties = net_properties.PetriProperties(self.petri_panel.petri)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self.tabs = wx.aui.AuiNotebook(self)
+        self.tabs.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CLOSE, lambda event:event.Veto()) # Forbid closing
+        sizer.Add(self.tabs, flag=wx.EXPAND, proportion=1)
+        self.SetSizer(sizer)
+        transition_lambda = lambda petri_panel=self.petri_panel:petri_panel.petri.get_sorted_transitions()
+        place_lambda = lambda petri_panel=self.petri_panel:petri_panel.petri.get_sorted_places()
+        clsf_properties = [('State machine', 'state_machine'),
+                           ('Marked graph','marked_graph'),
+                           ('Free choice net','free_choice'),
+                           ('Extended free choice net','extended_free_choice'),
+                           ('Simple','simple'),
+                           ('Asymmetric','asymmetric')]
+        clsf_properties = [ValueProperty(field, self.properties, label=label) for label,field in clsf_properties]
+        #classification_properties
+        self.tabs.AddPage(ScrolledPropertiesTabPanel(self, self.petri_panel, self.properties, clsf_properties), caption="Classification")
+        im_property = MatrixProperty('incidence_matrix', self.properties,
+                                      row_label_getter=place_lambda, col_label_getter=transition_lambda)
+        incidence_properties = [im_property]
+        self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, incidence_properties), caption="Incidence matrix")
+        
+        self.update_properties()
+        
+    def update_properties(self):
+        page = self.tabs.GetPage(self.tabs.GetSelection())
+        page.update_properties()
+   
+class PetriAndProperties(wx.SplitterWindow):
+    def __init__(self, parent, frame, clip_buffer, **kwargs):
+        super(PetriAndProperties, self).__init__(parent, **kwargs)
+        self.petri_panel = petrigui.petri_panel.PetriPanel(self, frame=frame, clip_buffer=clip_buffer)
+        self.properties_panel = PropertiesPanel(self, self.petri_panel)
+        self.SplitHorizontally(self.properties_panel, self.petri_panel)
+        self.SetMinimumPaneSize(20)
+        
+    def update_properties(self):
+        
+        self.properties_panel.update_properties()
 
 class Example(wx.Frame):
     def __init__(self, parent, title):
         super(Example, self).__init__(parent, title=title, 
             size=(500, 500))
+        
+        self.clip_buffer = Buffer()
         vert_sizer = wx.BoxSizer(wx.VERTICAL)
         buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.clip_buffer = Buffer()
         formats = [TxtFormat,]
         menubar = wx.MenuBar()
         fileMenu = wx.Menu()
@@ -279,7 +453,8 @@ class Example(wx.Frame):
         self.petri_panel.zoom_restore()
         
     def create_new_panel(self):
-        return petrigui.petri_panel.PetriPanel(self.tabs, frame=self, clip_buffer=self.clip_buffer)
+        return PetriAndProperties(self.tabs, frame=self, clip_buffer=self.clip_buffer)
+        #return petrigui.petri_panel.PetriPanel(self.tabs, frame=self, clip_buffer=self.clip_buffer)
         
     def on_state_changed(self):
         self.SetStatusText(str(self.petri_panel.petri.get_state()))
@@ -290,11 +465,11 @@ class Example(wx.Frame):
         self._unnamed_count += 1
         title = '%s %s'%(title, (str(self._unnamed_count) if self._unnamed_count else ''))
         petri_panel.SetName(title)
-        self.tabs.AddPage(petri_panel, petri_panel.get_name(), select=True)
+        self.tabs.AddPage(petri_panel, petri_panel.petri_panel.get_name(), select=True)
         self.update_menu()
                 
     def panel_getter(self):
-        return self.tabs.GetPage(self.tabs.Selection)
+        return self.tabs.GetPage(self.tabs.Selection).petri_panel
     
     petri_panel = property(panel_getter)
         
@@ -394,18 +569,21 @@ class Example(wx.Frame):
         filepath = dlg.GetPath()
         panel = self.create_new_panel()
         try:
-            panel.load_from_file(filepath, format=format)
+            a = time.time()
+            panel.petri_panel.load_from_file(filepath, format=format)
+            print 'time to load',time.time()-a
         except Exception, e:
             self.DisplayError('Error while loading petri net:\n%s'%traceback.format_exc(), title='Error while opening file')
         else:
-            self.tabs.AddPage(panel, panel.get_name(), select=True)
+            panel.update_properties()
+            self.tabs.AddPage(panel, panel.petri_panel.get_name(), select=True)
         
     def close_tab(self, pos):
         """ Returns false if user decided not to close the tab """
         tab = self.tabs.GetPage(pos)
-        if not tab.has_unsaved_changes:
+        if not tab.petri_panel.has_unsaved_changes:
             return True
-        dlg = wx.MessageDialog(self, message='There are unsaved changes in "%s". Save?'%tab.GetName(), style=wx.YES_NO|wx.CANCEL|wx.CENTER)
+        dlg = wx.MessageDialog(self, message='There are unsaved changes in "%s". Save?'%tab.petri_panel.GetName(), style=wx.YES_NO|wx.CANCEL|wx.CENTER)
         result = dlg.ShowModal()
         if result == wx.ID_YES:
             tab.save()
@@ -456,7 +634,7 @@ class Example(wx.Frame):
         page_count = self.tabs.GetPageCount()
         for i in xrange(page_count):
             tab = self.tabs.GetPage(i)
-            if not tab.has_unsaved_changes:
+            if not tab.petri_panel.has_unsaved_changes:
                 continue
             self.tabs.Selection = i
             if not self.close_tab(i):
