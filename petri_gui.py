@@ -44,7 +44,7 @@ import petrigui.add_object_strategy
 import petrigui.petri_objects
 import petrigui.petri_panel
 import net_properties
-
+import numpy as np
 
     
 class SimulateStrategy(Strategy):
@@ -147,6 +147,8 @@ class GUIProperty(object):
         self.properties = properties
         self.parent = None
         
+        self.proportion = 0
+        
     def init_ui(self, parent):
         self.element = self.create_element(parent)
         self.parent = parent
@@ -172,6 +174,8 @@ class MatrixProperty(GUIProperty):
         self.row_label_getter = row_label_getter
         self.col_label_getter = col_label_getter
         
+        self.proportion = 1
+        
     def create_element(self, parent):
         self.__grid = wx.grid.Grid(parent)
         self.__grid.EnableDragColSize(True)
@@ -182,7 +186,12 @@ class MatrixProperty(GUIProperty):
     
     def show_to_ui(self, value):
         matrix = value
-        r,c = matrix.shape
+        if not isinstance(matrix,np.ndarray):
+            matrix = np.array(matrix)
+        try:
+            r,c = matrix.shape
+        except ValueError:
+            r = c = 0
         rows, cols = self.__grid.GetNumberRows(), self.__grid.GetNumberCols()
         diff_r = r-rows
         diff_c = c-cols
@@ -194,30 +203,41 @@ class MatrixProperty(GUIProperty):
             self.__grid.AppendCols(diff_c)
         elif diff_c<0:
             self.__grid.DeleteCols(pos=0, numCols=abs(diff_c))
-        for i, transition in enumerate(self.col_label_getter()):
-            self.__grid.SetColLabelValue(i, transition.unique_id)
-        for i,place in enumerate(self.row_label_getter()):
-            self.__grid.SetRowLabelValue(i, place.unique_id)
+            
+        for i, name in zip(xrange(c), self.col_label_getter()):
+            self.__grid.SetColLabelValue(i, str(name))
+        for i,name in zip(xrange(r), self.row_label_getter()):
+            self.__grid.SetRowLabelValue(i, str(name))
         for i in xrange(r):
             for j in xrange(c):
                 self.__grid.SetCellValue(i, j, str(int(matrix[i,j])))
                 
-class ValueProperty(GUIProperty):
+class LabeledProperty(GUIProperty):
     def __init__(self, field, properties, label, **kwargs):
-        super(ValueProperty, self).__init__(field, properties, **kwargs)
+        super(LabeledProperty, self).__init__(field, properties, **kwargs)
         self.label = label
         
     def create_element(self, parent):
         result = wx.BoxSizer(wx.HORIZONTAL)
         label_elem = wx.StaticText(parent, label=self.label)
-        self.__value_elem = wx.TextCtrl(parent)
-        self.__value_elem.SetEditable(False)
+        self.__labeled_value_elem = self.create_element_for_label(parent)
         result.Add(label_elem, flag=wx.CENTER)
-        result.Add(self.__value_elem, flag=wx.CENTER, proportion=1)
+        result.Add(self.__labeled_value_elem, flag=wx.CENTER, proportion=1)
         return result
+    
+    def create_element_for_label(self, parent):
+        raise NotImplementedError()
         
     def show_to_ui(self, value):
-        self.__value_elem.SetValue(str(value))                
+        self.__labeled_value_elem.SetValue(str(value))   
+        
+class ValueProperty(LabeledProperty):
+    def create_element_for_label(self, parent):
+        value_elem = wx.TextCtrl(parent)
+        value_elem.SetEditable(False)
+        return value_elem
+
+    
 import wx.lib.scrolledpanel
 class PropertiesTabPanelMixin(object):
     def __init__(self, parent, petri_panel, properties, properties_lst, **kwargs):
@@ -236,7 +256,7 @@ class PropertiesTabPanelMixin(object):
             additional_sizer = sizer
         for prop in self.properties_lst:
             element = prop.init_ui(self)
-            additional_sizer.Add(element, flag=wx.EXPAND, proportion=1)
+            additional_sizer.Add(element, flag=wx.EXPAND, proportion=prop.proportion)
         if scrolled:
             sizer.Add(additional_sizer, flag=wx.EXPAND)
         #sizer.Add(grid, flag=wx.EXPAND, proportion=1)
@@ -275,8 +295,11 @@ class PropertiesPanel(wx.Panel):
         self.tabs.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CLOSE, lambda event:event.Veto()) # Forbid closing
         sizer.Add(self.tabs, flag=wx.EXPAND, proportion=1)
         self.SetSizer(sizer)
-        transition_lambda = lambda petri_panel=self.petri_panel:petri_panel.petri.get_sorted_transitions()
-        place_lambda = lambda petri_panel=self.petri_panel:petri_panel.petri.get_sorted_places()
+        transition_lambda = lambda petri_panel=self.petri_panel:(transition.unique_id for transition in
+                                                                    petri_panel.petri.get_sorted_transitions())
+        place_lambda = lambda petri_panel=self.petri_panel:(place.unique_id for place in 
+                                                                    petri_panel.petri.get_sorted_places())
+        ordinal_lambda = lambda:itertools.count(1)
         clsf_properties = [('State machine', 'state_machine'),
                            ('Marked graph','marked_graph'),
                            ('Free choice net','free_choice'),
@@ -286,10 +309,37 @@ class PropertiesPanel(wx.Panel):
         clsf_properties = [ValueProperty(field, self.properties, label=label) for label,field in clsf_properties]
         #classification_properties
         self.tabs.AddPage(ScrolledPropertiesTabPanel(self, self.petri_panel, self.properties, clsf_properties), caption="Classification")
+        # incidence matrix
         im_property = MatrixProperty('incidence_matrix', self.properties,
                                       row_label_getter=place_lambda, col_label_getter=transition_lambda)
+        #liveness = ValueProperty('liveness', self.properties, label='Liveness')
+        
         incidence_properties = [im_property]
         self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, incidence_properties), caption="Incidence matrix")
+        # t-invariants
+        t_invariants_prop = MatrixProperty('t_invariants', self.properties,
+                                           row_label_getter=ordinal_lambda, col_label_getter=transition_lambda)
+                
+        consistency = ValueProperty('consistency', self.properties, label='Consistency')
+
+        A_rank = ValueProperty('A_rank', self.properties, label='Incidence matrix rank')
+
+        t_inv_properties = [t_invariants_prop, consistency, A_rank]
+
+        self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, t_inv_properties), caption='T invariants')
+        # s-invariants
+        s_invariants_prop = MatrixProperty('s_invariants', self.properties,
+                                           row_label_getter=ordinal_lambda, col_label_getter=place_lambda)
+
+        
+
+        s_inv_properties = [s_invariants_prop]
+        
+        self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, s_inv_properties), caption='S invariants')
+
+        
+        
+        #self.tabss_invariant
         
         self.update_properties()
         
