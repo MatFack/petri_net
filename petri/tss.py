@@ -82,7 +82,7 @@ def solve(matr, ineq=False, limit=-1):
                 prev_solutions.append(vec_base[i])
         else:
             if sol_row[i] == 0:
-                prev_solutions.append(vec_base[i])            
+                prev_solutions.append(vec_base[i])      
     while True:
         if not all(x==0 for x in sol_row):
             rank += 1
@@ -134,7 +134,9 @@ def solve(matr, ineq=False, limit=-1):
             return [], rank
         new_vec_values = simplify(vec_values)
         vec_values = new_vec_values
-        if all(val>0 for val in vec_values) or all(val<0 for val in vec_values):
+        if all(val>0 for val in vec_values) and not ineq:
+            break
+        if all(val<0 for val in vec_values):
             break
         sol_row = np.array(vec_values)
         vec_base = vec_collection
@@ -204,10 +206,9 @@ p3 p2 t5 p1"""
         
     print '#'*80
     
-    A = np.matrix([[1,-1,0],
-                   [0,1,-1],
-                   [0,-1,1]])
-    sol, rank = solve(A)
+    A = np.matrix([[1, 1],
+                   [1, 1]])
+    sol, rank = solve(A, ineq=True)
     print rank
     for s in sol:
         print s

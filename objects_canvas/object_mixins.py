@@ -37,6 +37,18 @@ class PositionMixin(object):
         new_y = self.memo_y + diff_y
         self.set_position(new_x, new_y)
         
+class HighlightingMixin(object):
+    def __init__(self, *args, **kwargs):
+        self.highlighted = None
+        super(HighlightingMixin, self).__init__(*args, **kwargs)
+        
+    def highlight(self, value):
+        self.highlighted = value
+                
+    def unhighlight(self):
+        self.highlighted = None
+        
+        
 class SelectionMixin(object):
     def __init__(self, *args, **kwargs):
         self.selected = False

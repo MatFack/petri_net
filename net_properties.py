@@ -4,6 +4,7 @@ import numpy as np
 import petri.tss as tss
 import itertools
 import collections
+import traceback
   
 PROPERTY_FALSE, PROPERTY_PARTIALLY, PROPERTY_FULLY = 'false', 'partially', 'fully'
     
@@ -57,6 +58,15 @@ def sum_weight(arcs):
     
 class CantComputeError(Exception):
     pass
+
+class ArraySubclass(np.ndarray):
+    def __new__(cls, data):
+            if isinstance(data, ArraySubclass):
+                    return data
+            if isinstance(data, np.ndarray):
+                    return data.view(cls)
+            arr = np.array(data)
+            return np.ndarray.__new__(ArraySubclass, shape=arr.shape, dtype=arr.dtype, buffer=arr)
     
 class PetriProperties(object):
     def __init__(self, net=None):
@@ -220,11 +230,12 @@ class PetriProperties(object):
     _compute_structural_boundedness = _compute_Ax_ineq_sol
     
     def _compute_conservativeness(self):
-        result = 2
         # TODO: Should we solve Ax!=0 eq instead?
-        #- Ax_ineq_sol
-        #for sol in self.Ax_ineq_sol:
-        #    if all(sol)
+        # ??????????????????????
+        #+ conservativeness
+        #self.conservativeness = conservativeness
+        pass
+
             
     def _compute_repeatable(self):
         # It's repeatable when it's covered by T invariants + Ax_ineq_sol-s?
@@ -254,7 +265,6 @@ class PetriProperties(object):
         #+ consistency
         self.consistency = result
         
-    
     def _compute_s_invariants(self):
         A = self.incidence_matrix
         s_inv, AT_rank = tss.solve(A.transpose())
@@ -346,8 +356,6 @@ class PetriProperties(object):
             dl_rows += len(transition.output_arcs)
             tr_rows += len(transition.input_arcs)
         
-        empty_or_second_none = lambda x:not x or x[1]
-        #print self.place_input_arcs
         #- place_input
         places_without_input = [place for place in places if not self.place_input_arcs[place]]
         
@@ -404,59 +412,72 @@ class PetriProperties(object):
         #  [_id_compress(places, deadlock_vector) for deadlock_vector in deadlock_vectors]
         #- deadlock_matrix
         #+ deadlocks
-        self.deadlocks, _ = tss.solve(self.deadlock_matrix, True, limit=1) 
+        self.deadlocks, _ = tss.solve(self.deadlock_matrix, True, limit=1)
+        
+        self.deadlocks = [ArraySubclass(dl) for dl in self.deadlocks] 
+        uncovered_deadlocks = []
+        structural_uncovered_deadlocks = []
+        
+        places = self._net.get_sorted_places()
+        
+        #- traps
+        traps = self.traps
+        for deadlock in self.deadlocks:
+            deadlock.has_trap = deadlock.has_marked_trap = False
+            for trap in traps:
+                if all(deadlock>=trap):
+                    deadlock.has_trap = True
+                    if is_marked_trap(trap, places):
+                        deadlock.has_marked_trap = True
+                        break
+            if not deadlock.has_trap:
+                structural_uncovered_deadlocks.append(deadlock)
+            elif not deadlock.has_marked_trap:
+                uncovered_deadlocks.append(deadlock)
+        
+        #+ uncovered_deadlocks
+        self.uncovered_deadlocks = uncovered_deadlocks
+        #+ structural_uncovered_deadlocks
+        self.structural_uncovered_deadlocks = uncovered_deadlocks
+                
+    _compute_uncovered_deadlocks = _compute_structural_uncovered_deadlocks = _compute_deadlocks   
+        
         
     def _compute_traps(self):
         #- trap_matrix
         #+ traps
         self.traps, _ = tss.solve(self.trap_matrix, True, limit=1) 
-        
-    def _compute_marked_traps(self):
+        for i, trap in enumerate(self.traps):
+            self.traps[i] = ArraySubclass(trap)
         marked_traps = []
         places = self._net.get_sorted_places()
-        #- traps
-        traps = self.traps
-        for trap_vector in traps:
+        for trap_vector in self.traps:
+            trap_vector.is_marked_trap = False
             if is_marked_trap(trap_vector, places):
                 marked_traps.append(trap_vector)
+                trap_vector.is_marked_trap = True
         #+ marked_traps
         self.marked_traps = marked_traps
+          
+    _compute_marked_traps = _compute_traps
                 
-    def _get_uncovered_deadlocks(self, only_marked_traps):
-        uncovered_deadlocks = []
-        #- deadlocks
-        deadlocks = self.deadlocks
-        if only_marked_traps:
-            #- marked_traps
-            traps = self.marked_traps
-        else:
-            #- traps
-            traps = self.traps
-        for deadlock_vector in deadlocks:
-            for trap in traps:
-                if all(deadlock_vector >= trap):
-                    break
-            else:
-                uncovered_deadlocks.append(deadlock_vector)
-        #+ uncovered_deadlocks
-        return uncovered_deadlocks
-        
-    def _compute_uncovered_deadlocks(self):
-        self.uncovered_deadlocks = self._get_uncovered_deadlocks(only_marked_traps=True)
-        
-    def _compute_structural_uncovered_deadlocks(self):
-        self.structural_uncovered_deadlocks = self._get_uncovered_deadlocks(only_marked_traps=False)
-        
     def _compute_liveness(self):
         #- uncovered_deadlocks
-        #+ liveness
-        # TODO: HELP! Free choice, assymetric, look at p. 148
-        self.liveness = (not bool(self.uncovered_deadlocks)) 
+        #- free_choice
+        if self.free_choice:
+            liveness = Tristate(not bool(self.uncovered_deadlocks))
+        else:
+            liveness = Tristate(None)
+        self.liveness = liveness
         
     def _compute_structural_liveness(self):
         #- structural_uncovered_deadlocks
+        if self.free_choice:
+            structural_liveness = Tristate(not bool(self.structural_uncovered_deadlocks))
+        else:
+            structural_liveness = Tristate(None)
         #+ structural_liveness
-        self.structural_liveness = not bool(self.structural_uncovered_deadlocks)
+        self.structural_liveness = structural_liveness
         
     def _compute_state_machine(self):
         result = True
@@ -523,18 +544,10 @@ class PetriProperties(object):
         #+ asymmetric
         self.asymmetric = self._check_output_place_property(lambda poa1, poa2, pot1, pot2:pot1.issubset(pot2) or pot2.issubset(pot1))
 
-    def _graph_is_tree(self):
-        return False
-        #- place_input
-        num_of_arcs = sum(len(pi) for (p,pi) in self.place_input)
-        #- place_output
-        num_of_arcs += sum(len(po) for (p,po) in self.place_output)
-        return num_of_arcs-1 == len(self._net.get_places())
-
     def _compute_regulated(self):
         result = False
         #- A_rank
-        rank_complete = self.A_rank == len(self._net.get_places())
+        rank_complete = self.A_rank == len(self._net.get_places()) > 0
         if rank_complete and self.marked_graph:
             result = Tristate(True)
         elif not rank_complete:

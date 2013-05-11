@@ -18,6 +18,11 @@ class PetriPanel(ObjectsCanvas):
         
     def OnSetFocus(self, event):
         self.set_temporary_state(None)
+        self.discard_highlighted()
+        
+    def discard_highlighted(self):
+        for obj in self.highlightable_objects_iter():
+            obj.unhighlight()
     
     def __petri_get(self):
         return self.objects_container
@@ -27,6 +32,12 @@ class PetriPanel(ObjectsCanvas):
         
     petri = property(fget=__petri_get, fset=__petri_set)
     
+    def highlight_objects(self, objects_dct):
+        self.discard_highlighted()
+        for obj, value in objects_dct.iteritems():
+            obj.highlight(value)
+        self.Refresh()
+    
     def set_temporary_state(self, marking):
         if marking:
             for place, token in zip(self.petri.get_sorted_places(), marking):
@@ -35,6 +46,12 @@ class PetriPanel(ObjectsCanvas):
             for place in self.petri.get_sorted_places():
                 place.set_temporary_tokens(None)
         self.Refresh()
+        
+    def highlightable_objects_iter(self):
+        for place in self.petri.get_places_iter():
+            yield place
+        for transition in self.petri.get_transitions_iter():
+            yield transition
     
     def get_objects_iter(self):
         for place in self.petri.get_places_iter():

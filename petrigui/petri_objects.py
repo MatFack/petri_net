@@ -2,7 +2,7 @@
 
 import itertools
 
-from objects_canvas.object_mixins import MenuMixin, SelectionMixin, PositionMixin
+from objects_canvas.object_mixins import MenuMixin, SelectionMixin, PositionMixin, HighlightingMixin
 from object_label import ObjectLabel
 import util.constants
 from petri import petri
@@ -15,7 +15,7 @@ from util import constants, serializable
 from commands.create_delete_command import CreateDeleteObjectCommand
 
 
-class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
+class GUIPlace(PositionMixin, SelectionMixin, HighlightingMixin, petri.Place):
     pos_x_to_serialize = True
     pos_y_to_serialize = True
     radius_to_serialize = True
@@ -57,8 +57,15 @@ class GUIPlace(PositionMixin, SelectionMixin, petri.Place):
             dc.SetPen(constants.BLUE_PEN)
         else:
             dc.SetPen(wx.BLACK_PEN)
+        if self.highlighted is not None:
+            dc.SetPen(constants.HIGHLIGHT_PEN)
         dc.SetBrush(wx.WHITE_BRUSH)
         dc.DrawCircle(self.pos_x, self.pos_y, self.radius)
+        if self.highlighted is not None:
+            txt_fg = dc.GetTextForeground()
+            dc.SetTextForeground(wx.BLUE)
+            util.drawing.draw_text_lb_corner(dc, str(self.highlighted), self.pos_x+self.radius, self.pos_y-self.radius)
+            dc.SetTextForeground(txt_fg)
         tokens = self.tokens
 
         if isinstance(tokens, basestring) or tokens>4:
@@ -444,7 +451,7 @@ class ArcPoint(SelectionMixin, PositionMixin, serializable.Serializable):
         return []
         
         
-class GUITransition(PositionMixin, SelectionMixin, MenuMixin, petri.Transition):
+class GUITransition(PositionMixin, SelectionMixin, MenuMixin, HighlightingMixin, petri.Transition):
     ARC_CLS = GUIArc
     
     pos_x_to_serialize = True
@@ -537,7 +544,15 @@ class GUITransition(PositionMixin, SelectionMixin, MenuMixin, petri.Transition):
         if self.is_selected:
             dc.SetPen(constants.BLUE_PEN)
         #dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        if self.highlighted is not None:
+            dc.SetPen(constants.HIGHLIGHT_PEN)
         dc.DrawRectangle(x,y,w,h)
+        if self.highlighted is not None:
+            txt_fg = dc.GetTextForeground()
+            dc.SetTextForeground(wx.BLUE)
+            util.drawing.draw_text_lb_corner(dc, str(self.highlighted), self.pos_x+self.width/2, self.pos_y-self.height/2)
+            dc.SetTextForeground(txt_fg)
+
         
     def get_rectangle(self):
         x,y = self.pos_x, self.pos_y

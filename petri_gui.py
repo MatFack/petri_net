@@ -166,32 +166,100 @@ class GUIProperty(object):
         self.show_to_ui(value)
         
     def show_to_ui(self, value):
-        raise NotImplementedError
+        raise NotImplementedError()
     
-class MatrixProperty(GUIProperty):
-    def __init__(self, field, properties, row_label_getter, col_label_getter, **kwargs):
-        super(MatrixProperty, self).__init__(field, properties, **kwargs)
+                
+class LabeledProperty(GUIProperty):
+    def __init__(self, field, properties, label, **kwargs):
+        super(LabeledProperty, self).__init__(field, properties, **kwargs)
+        self.label = label+': '
+
+        
+    def create_element(self, parent):
+        result = wx.BoxSizer(wx.HORIZONTAL)
+        label_elem = wx.StaticText(parent, label=self.label)
+        labeled_value_elem = self.create_element_for_label(parent)
+        result.Add(label_elem, flag=wx.CENTER)
+        result.Add(labeled_value_elem, flag=wx.CENTER, proportion=1)
+        return result
+    
+    def create_element_for_label(self, parent):
+        raise NotImplementedError()
+        
+        
+class ValueProperty(LabeledProperty):
+    def create_element_for_label(self, parent):
+        self.__value_elem = wx.TextCtrl(parent)
+        self.__value_elem.SetEditable(False)
+        return self.__value_elem
+    
+    def value_to_string(self, value):
+        return str(value)
+    
+    def show_to_ui(self, value):
+        self.__value_elem.SetValue(self.value_to_string(value))
+        
+class ValueListProperty(ValueProperty):
+    def value_to_string(self, value):
+        return ', '.join(value)
+
+        
+class MatrixProperty(LabeledProperty):
+    def __init__(self, field, properties, label, row_label_getter, col_label_getter, row_dclick_handler=None, col_dclick_handler=None, **kwargs):
+        super(MatrixProperty, self).__init__(field, properties, label, **kwargs)
         self.row_label_getter = row_label_getter
         self.col_label_getter = col_label_getter
-        
+        self.row_dclick_handler = row_dclick_handler
+        self.col_dclick_handler = col_dclick_handler
         self.proportion = 1
         
     def create_element(self, parent):
+        result = wx.BoxSizer(wx.VERTICAL)
+        label_elem = wx.StaticText(parent, label=self.label)
+        self.__labeled_value_elem = self.create_element_for_label(parent)
+        result.Add(label_elem, flag=wx.LEFT)
+        result.Add(self.__labeled_value_elem, flag=wx.EXPAND, proportion=1)
+        return result
+
+    def create_element_for_label(self, parent):
         self.__grid = wx.grid.Grid(parent)
         self.__grid.EnableDragColSize(True)
         self.__grid.EnableDragRowSize(True)
         self.__grid.EnableEditing(False)
         self.__grid.CreateGrid(0,0)
+        self.__grid.Bind(wx.grid.EVT_GRID_LABEL_LEFT_DCLICK, self.OnCellDClicked)
+        return self.__grid
+    
+    def OnCellDClicked(self, event):
+        row,col = event.GetRow(), event.GetCol()
+        if col==-1:
+            self.OnRowDClicked(event)
+        elif row==-1:
+            self.OnColDClicked(event)
+            
+    def OnRowDClicked(self, event):
+        if self.row_dclick_handler is not None:
+            self.row_dclick_handler(event)
+    
+    def OnColDClicked(self, event):
+        if self.col_dclick_handler is not None:
+            self.col_dclick_handler()
+    
+    def to_list_matrix(self, value):
+        if isinstance(value, dict):
+            value = value.items()
+        return value
+    
+    def get_grid(self):
         return self.__grid
     
     def show_to_ui(self, value):
-        matrix = value
-        if not isinstance(matrix,np.ndarray):
-            matrix = np.array(matrix)
+        matrix = self.to_list_matrix(value)
+        r = len(matrix)
         try:
-            r,c = matrix.shape
-        except ValueError:
-            r = c = 0
+            c = len(matrix[0])
+        except IndexError:
+            c = 0
         rows, cols = self.__grid.GetNumberRows(), self.__grid.GetNumberCols()
         diff_r = r-rows
         diff_c = c-cols
@@ -203,41 +271,39 @@ class MatrixProperty(GUIProperty):
             self.__grid.AppendCols(diff_c)
         elif diff_c<0:
             self.__grid.DeleteCols(pos=0, numCols=abs(diff_c))
-            
         for i, name in zip(xrange(c), self.col_label_getter()):
             self.__grid.SetColLabelValue(i, str(name))
         for i,name in zip(xrange(r), self.row_label_getter()):
             self.__grid.SetRowLabelValue(i, str(name))
         for i in xrange(r):
             for j in xrange(c):
-                self.__grid.SetCellValue(i, j, str(int(matrix[i,j])))
+                val = matrix[i][j]
+                self.__grid.SetCellValue(i, j, str(val))
+                self.__grid.SetCellBackgroundColour(i, j, wx.WHITE)
+    
+def set_row_color(grid, row, color):
+    columns = grid.GetNumberCols()
+    for c in xrange(columns):
+        grid.SetCellBackgroundColour(row, c, color)
                 
-class LabeledProperty(GUIProperty):
-    def __init__(self, field, properties, label, **kwargs):
-        super(LabeledProperty, self).__init__(field, properties, **kwargs)
-        self.label = label
-        
-    def create_element(self, parent):
-        result = wx.BoxSizer(wx.HORIZONTAL)
-        label_elem = wx.StaticText(parent, label=self.label)
-        self.__labeled_value_elem = self.create_element_for_label(parent)
-        result.Add(label_elem, flag=wx.CENTER)
-        result.Add(self.__labeled_value_elem, flag=wx.CENTER, proportion=1)
-        return result
-    
-    def create_element_for_label(self, parent):
-        raise NotImplementedError()
-        
+class TrapsMatrixProperty(MatrixProperty):
     def show_to_ui(self, value):
-        self.__labeled_value_elem.SetValue(str(value))   
-        
-class ValueProperty(LabeledProperty):
-    def create_element_for_label(self, parent):
-        value_elem = wx.TextCtrl(parent)
-        value_elem.SetEditable(False)
-        return value_elem
+        super(TrapsMatrixProperty, self).show_to_ui(value)
+        grid = self.get_grid()
+        for i, trap in enumerate(value):
+            if trap.is_marked_trap:
+                set_row_color(grid, i, wx.GREEN)
+                
+class DeadlocksMatrixProperty(MatrixProperty):
+    def show_to_ui(self, value):
+        super(DeadlocksMatrixProperty, self).show_to_ui(value)
+        grid = self.get_grid()
+        for i, deadlock in enumerate(value):
+            if deadlock.has_marked_trap:
+                set_row_color(grid, i, wx.GREEN)
+            elif deadlock.has_trap:
+                set_row_color(grid, i, wx.Colour(128,128,0))
 
-    
 import wx.lib.scrolledpanel
 class PropertiesTabPanelMixin(object):
     def __init__(self, parent, petri_panel, properties, properties_lst, **kwargs):
@@ -256,10 +322,9 @@ class PropertiesTabPanelMixin(object):
             additional_sizer = sizer
         for prop in self.properties_lst:
             element = prop.init_ui(self)
-            additional_sizer.Add(element, flag=wx.EXPAND, proportion=prop.proportion)
+            additional_sizer.Add(element, flag=wx.EXPAND | wx.ALL, proportion=prop.proportion, border=3)
         if scrolled:
             sizer.Add(additional_sizer, flag=wx.EXPAND)
-        #sizer.Add(grid, flag=wx.EXPAND, proportion=1)
         self.SetSizer(sizer)
         try:
             self.SetupScrolling()
@@ -300,6 +365,8 @@ class PropertiesPanel(wx.Panel):
         place_lambda = lambda petri_panel=self.petri_panel:(place.unique_id for place in 
                                                                     petri_panel.petri.get_sorted_places())
         ordinal_lambda = lambda:itertools.count(1)
+        
+        empty_lambda = lambda:itertools.cycle([''])
         clsf_properties = [('State machine', 'state_machine'),
                            ('Marked graph','marked_graph'),
                            ('Free choice net','free_choice'),
@@ -310,60 +377,126 @@ class PropertiesPanel(wx.Panel):
         #classification_properties
         self.tabs.AddPage(ScrolledPropertiesTabPanel(self, self.petri_panel, self.properties, clsf_properties), caption="Classification")
         # incidence matrix
-        im_property = MatrixProperty('incidence_matrix', self.properties,
+        im_property = MatrixProperty('incidence_matrix', self.properties, label='Incidence matrix',
                                       row_label_getter=place_lambda, col_label_getter=transition_lambda)
         #liveness = ValueProperty('liveness', self.properties, label='Liveness')
         
         incidence_properties = [im_property]
         self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, incidence_properties), caption="Incidence matrix")
         # t-invariants
-        t_invariants_prop = MatrixProperty('t_invariants', self.properties,
-                                           row_label_getter=ordinal_lambda, col_label_getter=transition_lambda)
+        t_invariants_prop = MatrixProperty('t_invariants', self.properties, label='T invariants',
+                                           row_label_getter=ordinal_lambda, col_label_getter=transition_lambda,
+                                           row_dclick_handler=self.transition_selector)
+                
+        uncovered_by_t = ValueListProperty('t_uncovered', self.properties, label='Transitions not covered by T invariants')
                 
         consistency = ValueProperty('consistency', self.properties, label='Consistency')
 
         A_rank = ValueProperty('A_rank', self.properties, label='Incidence matrix rank')
-
-        t_inv_properties = [t_invariants_prop, consistency, A_rank]
+        
+        Ax_ineq_prop = MatrixProperty('Ax_ineq_sol', self.properties, label='Ax>0 inequation solutions:',
+                                           row_label_getter=ordinal_lambda, col_label_getter=transition_lambda,
+                                           row_dclick_handler=self.transition_selector)
+        
+        repeatable = ValueProperty('repeatable', self.properties, label='Repeatable')
+        
+        regulated = ValueProperty('regulated', self.properties, label='Regulated')
+                        
+        t_inv_properties = [t_invariants_prop, uncovered_by_t, consistency, A_rank, Ax_ineq_prop, repeatable, regulated]
 
         self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, t_inv_properties), caption='T invariants')
         # s-invariants
-        s_invariants_prop = MatrixProperty('s_invariants', self.properties,
+        s_invariants_prop = MatrixProperty('s_invariants', self.properties, label='S invariants',
                                            row_label_getter=ordinal_lambda, col_label_getter=place_lambda)
 
-        
+        uncovered_by_s = ValueListProperty('s_uncovered', self.properties, label='Places not covered by S invariants')
 
-        s_inv_properties = [s_invariants_prop]
+
+        place_limits = MatrixProperty('place_limits', self.properties, label='Token limits',
+                                           row_label_getter=empty_lambda, col_label_getter=lambda:['Place', 'Limit'])
+
+
+        s_inv_properties = [s_invariants_prop, uncovered_by_s, place_limits]
         
         self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, s_inv_properties), caption='S invariants')
+        # deadlocks and traps
+        deadlocks_prop = DeadlocksMatrixProperty('deadlocks', self.properties, label='Deadlocks (green deadlocks have marked trap, olive have trap)',
+                                           row_label_getter=ordinal_lambda, col_label_getter=place_lambda, 
+                                           row_dclick_handler=self.place_selector)
+        
+        traps_prop = TrapsMatrixProperty('traps', self.properties, label='Traps (green are marked traps)',
+                                           row_label_getter=ordinal_lambda, col_label_getter=place_lambda,
+                                           row_dclick_handler=self.place_selector)
 
+        dl_trap_properties = [deadlocks_prop, traps_prop]
         
-        
-        #self.tabss_invariant
+        self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, dl_trap_properties), caption='Deadlocks & traps')
         
         self.update_properties()
+        
+    def object_selector(self, event, objects):
+        row = event.GetRow()
+        grid = event.GetEventObject()
+        cols = grid.GetNumberCols()
+        result = {}
+        for i,obj in enumerate(objects):
+            val = grid.GetCellValue(row, i)
+            if int(val):
+                result[obj] = val
+        self.petri_panel.highlight_objects(result)
+        
+    def transition_selector(self, event):
+        self.object_selector(event, self.petri_panel.petri.get_sorted_transitions())
+        
+    def place_selector(self, event):
+        self.object_selector(event, self.petri_panel.petri.get_sorted_places())
+
         
     def update_properties(self):
         page = self.tabs.GetPage(self.tabs.GetSelection())
         page.update_properties()
    
 class PetriAndProperties(wx.SplitterWindow):
-    def __init__(self, parent, frame, clip_buffer, **kwargs):
+    def __init__(self, parent, frame, clip_buffer, tab_splitter_position, **kwargs):
         super(PetriAndProperties, self).__init__(parent, **kwargs)
+        self.frame = frame
+        self.tab_splitter_position = tab_splitter_position
         self.petri_panel = petrigui.petri_panel.PetriPanel(self, frame=frame, clip_buffer=clip_buffer)
         self.properties_panel = PropertiesPanel(self, self.petri_panel)
-        self.SplitHorizontally(self.properties_panel, self.petri_panel)
-        self.SetMinimumPaneSize(20)
+        #self.SplitHorizontally(self.properties_panel, self.petri_panel, sashPosition=100)
+        #self.Unsplit()
+        self.SetMinimumPaneSize(self.properties_panel.tabs.GetTabCtrlHeight()*2)
+        self.SplitVertically(self.properties_panel, self.petri_panel, sashPosition=100)
+        self.Bind(wx.EVT_SIZE, self.OnSize)
+        self.first_sash_event = False
+        self.Bind(wx.EVT_SPLITTER_SASH_POS_CHANGED, self.OnSashPosChanged)
+
         
+    def update_splitter_position(self, pos):
+        self.tab_splitter_position = pos
+        self.SetSashPosition(self.tab_splitter_position)
+        
+    def OnSize(self, event):
+        self.update_splitter_position(self.tab_splitter_position)
+        event.Skip()
+        
+    def OnSashPosChanged(self, event):
+        if not self.first_sash_event:
+            self.first_sash_event = True
+        else:
+            self.tab_splitter_position = self.GetSashPosition()
+            self.frame.set_tab_splitter_position(self.GetSashPosition())
+        event.Skip()
+                
     def update_properties(self):
-        
         self.properties_panel.update_properties()
 
 class Example(wx.Frame):
     def __init__(self, parent, title):
         super(Example, self).__init__(parent, title=title, 
-            size=(500, 500))
+            size=(1400, 800))
         
+        self.splitter_orientation = wx.SPLIT_VERTICAL
         self.clip_buffer = Buffer()
         vert_sizer = wx.BoxSizer(wx.VERTICAL)
         buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -408,16 +541,19 @@ class Example(wx.Frame):
         self.zoom_in_item = viewMenu.Append(wx.NewId(), 'Zoom &in\tCtrl++', 'Zoom in')
         self.zoom_out_item = viewMenu.Append(wx.NewId(), 'Zoom &out\tCtrl+-', 'Zoom out')
         self.zoom_restore_item = viewMenu.Append(wx.NewId(), '&Zoom restore\tCtrl+R', 'Zoom restore')
+        viewMenu.AppendSeparator()
+        change_splitter_orientation = viewMenu.Append(wx.NewId(), 'Change splitter orientation', 'Change splitter orientation')
         menubar.Append(viewMenu, '&View')
         layoutMenu = wx.Menu()
         self.automatic_layout_item = layoutMenu.Append(wx.NewId(), '&Automatic layout', 'Automatic layout of current net')
         menubar.Append(layoutMenu, '&Layout')
+        
         analysisMenu = wx.Menu()
         self.reachability_graph_item = analysisMenu.Append(wx.NewId(), '&Reachability graph', 'Generate reachability graph of current net')
         menubar.Append(analysisMenu, '&Analysis')
         
         self.CreateStatusBar()
-        
+        self.tab_splitter_position = 700
         self.SetMenuBar(menubar)
         # Menu bindings
         # File
@@ -443,6 +579,8 @@ class Example(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnZoomIn, self.zoom_in_item)
         self.Bind(wx.EVT_MENU, self.OnZoomOut, self.zoom_out_item)
         self.Bind(wx.EVT_MENU, self.OnZoomRestore, self.zoom_restore_item)
+        # --- separator ---
+        self.Bind(wx.EVT_MENU, self.OnChangeSplitterOrientation, change_splitter_orientation)
         # Layout
         self.Bind(wx.EVT_MENU, self.OnKKLayout, self.automatic_layout_item)
         # Analysis
@@ -492,6 +630,13 @@ class Example(wx.Frame):
         gf = graph_frame.GraphFrame(self, petri_panel=self.petri_panel, title='Reachability graph of %s'%self.petri_panel.GetName())
         gf.Show()
         
+    def OnChangeSplitterOrientation(self, event):
+        self.splitter_orientation = wx.SPLIT_HORIZONTAL if self.splitter_orientation == wx.SPLIT_VERTICAL \
+                                        else wx.SPLIT_VERTICAL
+        self.update_splitter_orientation()        
+        
+    def set_tab_splitter_position(self, position):
+        self.tab_splitter_position = position
         
     def OnZoomIn(self, event):
         self.petri_panel.zoom_in()
@@ -503,7 +648,7 @@ class Example(wx.Frame):
         self.petri_panel.zoom_restore()
         
     def create_new_panel(self):
-        return PetriAndProperties(self.tabs, frame=self, clip_buffer=self.clip_buffer)
+        return PetriAndProperties(self.tabs, frame=self, clip_buffer=self.clip_buffer, tab_splitter_position=self.tab_splitter_position)
         #return petrigui.petri_panel.PetriPanel(self.tabs, frame=self, clip_buffer=self.clip_buffer)
         
     def on_state_changed(self):
@@ -519,7 +664,11 @@ class Example(wx.Frame):
         self.update_menu()
                 
     def panel_getter(self):
-        return self.tabs.GetPage(self.tabs.Selection).petri_panel
+        return self.current_tab.petri_panel
+    
+    @property
+    def current_tab(self):
+        return self.tabs.GetPage(self.tabs.Selection)
     
     petri_panel = property(panel_getter)
         
@@ -671,10 +820,18 @@ class Example(wx.Frame):
         self.update_menu()
         
     def OnPageChanged(self, event):
-        print "Page changed"
         self.update_menu()
         self.on_state_changed()
         self.petri_panel.SetFocus()
+        self.update_splitter_orientation()
+        
+    def update_splitter_orientation(self):
+        tab = self.current_tab
+        if tab.GetSplitMode() != self.splitter_orientation:
+            tab.SetSplitMode(self.splitter_orientation)
+            tab.SendSizeEvent()
+        tab.update_splitter_position(self.tab_splitter_position)
+        self.Refresh()
         
     def OnRedo(self, event):
         self.petri_panel.redo()
