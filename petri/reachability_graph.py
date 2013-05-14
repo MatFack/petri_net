@@ -1,9 +1,7 @@
 
-from net_properties import PetriProperties
+#from net_properties import PetriProperties
 import collections
 from pprint import pprint
-import igraph
-# This is prototype, no premature optimisation please
 
 DEBUG = False
 
@@ -11,6 +9,12 @@ def spec_add(a, b):
     if a == 'w' or b=='w':
         return 'w'
     return a+b
+
+def smaller(a, b):
+    if a=='w':
+        return b=='w'
+    return b=='w' or a<b
+
 
 def get_next_state(state, trans, req):
     lst = []
@@ -47,10 +51,11 @@ def greater_than(marking1, marking2):
 class ReachabilityGraph(object):
     def __init__(self, net, properties=None):
         self.net = net
-        if properties is None:
-            properties = PetriProperties(self.net)
+        #if properties is None:
+        #    properties = PetriProperties(self.net)
         self.properties = properties
-        
+        # 
+        self.reset()
         self.explored = {}
         places = {place:i for i,place in enumerate(self.net.get_sorted_places())}
         self.move_names = [transition.unique_id for transition in self.net.get_sorted_transitions()]
@@ -68,56 +73,64 @@ class ReachabilityGraph(object):
             self.transition_moves[transition.unique_id] = (tuple(move_tuple), tuple(req_tuple))
 
         
+    def reset(self):
+        self.bounded = None
+        self.dead_states = []
+        self.place_limits = []
+        self.max_tokens_number = 0
         
     def explore(self, initial):
+        self.reset()
+        self.bounded = True
         self.names = {}
+        for tokens in initial:
+            self.place_limits.append([tokens, tokens])
         stack = collections.deque([(initial, 0)])
         cur_path = collections.deque()
         while stack:
             state, level = stack.pop()
+            tokens_number = reduce(spec_add, state)
+            if tokens_number == 'w':
+                self.bounded = False
+            if smaller(self.max_tokens_number, tokens_number):
+                self.max_tokens_number = tokens_number
+            for limit, token_val in zip(self.place_limits, state):
+                min_val, max_val = limit
+                if not smaller(min_val, token_val):
+                    min_val = token_val
+                if not smaller(token_val, max_val):
+                    max_val = token_val
+                limit[0], limit[1] = min_val, max_val
             if state in self.explored:
                 continue
             while cur_path and cur_path[-1][-1] >= level:
                 cur_path.pop()
             cur_path.append((state, level))
-            self.names[state] = 'S%d'%(len(self.names)+1)
+            state_name = 'S%d'%(len(self.names)+1)
+            self.names[state] = state_name
             neighbours = {}
             self.explored[state] = neighbours
             for trans_name, (move, req) in self.transition_moves.iteritems():
                 next_state = get_next_state(state, move, req)
                 if next_state:
-                    for s, _ in reversed(cur_path):
-                        res = greater_than(next_state, s)
-                        if res:
-                            next_state = tuple(res)
-                            break
+                    if not (self.properties and self.properties.bounded_by_s == True):
+                        for s, _ in reversed(cur_path):
+                            res = greater_than(next_state, s)
+                            if res:
+                                next_state = tuple(res)
+                                break
                     if next_state not in self.explored:
                         stack.append((next_state, level+1))
                     neighbours[trans_name] = next_state
-        if DEBUG:
-            G = igraph.Graph(directed=True)
-            print "STATES",len(self.explored)
-            for state in self.explored:
-                name = self.names[state]
-                G.add_vertex(name)
-            labels = {}
-            arcs = 0
-            for v, neighbours in self.explored.iteritems():
-                name = self.names[v]
-                for trans, neighbour in neighbours.iteritems():
-                    to_name = self.names[neighbour]
-                    arcs+=1
-                    G.add_edge(name, to_name, name=trans)
-            G.vs["label"] = G.vs["name"]
-            G.es["label"] = G.es["name"]
-            layout = G.layout("kk")
-            igraph.plot(G)
-            
+            if not neighbours:
+                self.dead_states.append(state_name)
+                
+
         
 if __name__ == '__main__':
     import json
     import petri
-    with open('../examples/pots.json','rb') as f:
+    with open('../examples/trash/infinite.json','rb') as f:
         net = petri.PetriNet.from_json_struct(json.load(f))
     r = ReachabilityGraph(net)
     r.explore(net.get_state())

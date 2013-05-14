@@ -170,7 +170,33 @@ class GraphPanel(ObjectsCanvas):
         self.graph = Graph()
         super(GraphPanel, self).__init__(parent, frame=frame, **kwargs)
         self.SetName("Reachability graph")
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
         
+    def OnKeyDown(self, event):
+        if not self.process_key(event):
+            event.Skip()
+        
+    def process_key(self, event):
+        print event.ShiftDown()
+        print event.KeyCode,ord('A'),ord('a')
+        if not event.ShiftDown():
+            return False
+        if event.KeyCode == ord('Z'):
+            self.undo()
+        elif event.KeyCode == ord('Y'):
+            self.redo()
+        elif event.KeyCode == ord('A'):
+            self.select_all()
+        elif event.KeyCode == ord('+'):
+            self.zoom_in()
+        elif event.KeyCode == ord('-'):
+            self.zoom_out()
+        elif event.KeyCode == ord('R'):
+            self.zoom_restore()
+        else:
+            return False
+        return True
+
     def __graph_get(self):
         return self.objects_container
     
@@ -196,10 +222,16 @@ class GraphPanel(ObjectsCanvas):
     petri = property(fget=__graph_get, fset=__graph_set)
     
     def set_temporary_state(self, marking):
-        self.GetParent().set_temporary_state(marking)
+        self.frame.set_temporary_state(marking)
     
     def get_selection(self):
         return self.strategy.selection
+    
+    def select_states(self, states):
+        self.strategy.discard_selection()
+        self.strategy.add_to_selection(*[self.graph.vertices[state] for state in states])
+        self.Refresh()
+        
     
     def get_objects_iter(self):
         for vertex in self.graph.get_vertices():

@@ -22,8 +22,8 @@ def draw_text(dc, text, center_x, center_y):
     tw, th = dc.GetTextExtent(text)
     dc.DrawText(text, (center_x-tw/2),  (center_y-th/2))
     
-def draw_text_lb_corner(dc, text, pos_x, pos_y):
+def draw_text_lb_corner(dc, text, pos_x, pos_y, size_multiplier=1):
     """ Draws text, given the left bottom point """
-    tw, th = dc.GetTextExtent(text)
-    dc.DrawText(text, (pos_x-tw),  (pos_y-th))
+    tw, th = dc.GetTextExtent(text, size_multiplier)
+    dc.DrawText(text, (pos_x-tw),  (pos_y-th), size_multiplier=size_multiplier)
     

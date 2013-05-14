@@ -28,7 +28,6 @@
 # Probably, ability to select by some criteria
 
 
-# Well, and after paper shit, splitting into chunks and drawing only visible chunks. Later. Fuck paper shit.
 import time
 from objects_canvas.strategy import Strategy
 from objects_canvas.move_strategy import MoveAndSelectStrategy
@@ -45,6 +44,8 @@ import petrigui.petri_objects
 import petrigui.petri_panel
 import net_properties
 import numpy as np
+import stategraph.graph_frame
+import stategraph
 
     
 class SimulateStrategy(Strategy):
@@ -432,7 +433,12 @@ class PropertiesPanel(wx.Panel):
         
         self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, dl_trap_properties), caption='Deadlocks & traps')
         
+        self.tabs.AddPage(stategraph.graph_frame.GraphAndAnalysisPanel(self, self.petri_panel), caption='Reachability graph')
+        self.tabs.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CHANGED, self.OnPageChanged)
         self.update_properties()
+        
+    def OnPageChanged(self, event):
+        self.Parent.OnPageChanged(self.tabs.GetSelection())
         
     def object_selector(self, event, objects):
         row = event.GetRow()
@@ -487,6 +493,12 @@ class PetriAndProperties(wx.SplitterWindow):
             self.tab_splitter_position = self.GetSashPosition()
             self.frame.set_tab_splitter_position(self.GetSashPosition())
         event.Skip()
+        
+    def OnPageChanged(self, page_number):
+        self.frame.tab_page_number = page_number
+        
+    def set_tab_page_number(self, page_number):
+        self.properties_panel.tabs.SetSelection(page_number)
                 
     def update_properties(self):
         self.properties_panel.update_properties()
@@ -497,6 +509,7 @@ class Example(wx.Frame):
             size=(1400, 800))
         
         self.splitter_orientation = wx.SPLIT_VERTICAL
+        self.tab_page_number = 0
         self.clip_buffer = Buffer()
         vert_sizer = wx.BoxSizer(wx.VERTICAL)
         buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -774,7 +787,7 @@ class Example(wx.Frame):
         except Exception, e:
             self.DisplayError('Error while loading petri net:\n%s'%traceback.format_exc(), title='Error while opening file')
         else:
-            panel.update_properties()
+            #panel.update_properties()
             self.tabs.AddPage(panel, panel.petri_panel.get_name(), select=True)
         
     def close_tab(self, pos):
@@ -824,6 +837,7 @@ class Example(wx.Frame):
         self.on_state_changed()
         self.petri_panel.SetFocus()
         self.update_splitter_orientation()
+        self.current_tab.set_tab_page_number(self.tab_page_number)
         
     def update_splitter_orientation(self):
         tab = self.current_tab

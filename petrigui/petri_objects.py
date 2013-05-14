@@ -64,16 +64,19 @@ class GUIPlace(PositionMixin, SelectionMixin, HighlightingMixin, petri.Place):
         if self.highlighted is not None:
             txt_fg = dc.GetTextForeground()
             dc.SetTextForeground(wx.BLUE)
-            util.drawing.draw_text_lb_corner(dc, str(self.highlighted), self.pos_x+self.radius, self.pos_y-self.radius)
+            util.drawing.draw_text_lb_corner(dc, str(self.highlighted), self.pos_x+self.radius, self.pos_y-self.radius, size_multiplier=1)
             dc.SetTextForeground(txt_fg)
         tokens = self.tokens
 
         if isinstance(tokens, basestring) or tokens>4:
+            txt_fg = dc.GetTextForeground()
             if self.temporary_tokens is not None:
                 dc.SetPen(constants.BLUE_PEN)
+                dc.SetTextForeground(wx.BLUE)
             else:
                 dc.SetPen(wx.BLACK_PEN)
             util.drawing.draw_text(dc, str(tokens), self.pos_x, self.pos_y)
+            dc.SetTextForeground(txt_fg)
         elif tokens>0:
             self.draw_tokens(dc, tokens)    
             
@@ -550,7 +553,7 @@ class GUITransition(PositionMixin, SelectionMixin, MenuMixin, HighlightingMixin,
         if self.highlighted is not None:
             txt_fg = dc.GetTextForeground()
             dc.SetTextForeground(wx.BLUE)
-            util.drawing.draw_text_lb_corner(dc, str(self.highlighted), self.pos_x+self.width/2, self.pos_y-self.height/2)
+            util.drawing.draw_text_lb_corner(dc, str(self.highlighted), self.pos_x+self.width/2, self.pos_y-self.height/2, size_multiplier=1.5)
             dc.SetTextForeground(txt_fg)
 
         

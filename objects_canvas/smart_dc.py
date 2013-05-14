@@ -8,14 +8,15 @@ class SmartDC(wx.BufferedPaintDC):
         self.panel = window
         super(SmartDC, self).__init__(window, *args, **kwargs)
     
-    def _update_font_size(self):
+    def _update_font_size(self, size_multiplier, mul_zoom=True):
         font = self.GetFont()
-        new_size = max(6.0, 10*self.panel.zoom)
-        font.SetPointSize(new_size)
+        zoom = self.panel.zoom if mul_zoom else 1
+        new_size = max(6.0, 10*zoom)
+        font.SetPointSize(new_size*size_multiplier)
         self.SetFont(font)
     
-    def GetTextExtent(self, text):
-        self._update_font_size()
+    def GetTextExtent(self, text, size_multiplier=1):
+        self._update_font_size(size_multiplier, mul_zoom=False)
         return super(SmartDC, self).GetTextExtent(text)
     
     def DrawRectangle(self, x, y, width, height):
@@ -37,8 +38,8 @@ class SmartDC(wx.BufferedPaintDC):
         radius *= self.panel.zoom
         return super(SmartDC, self).DrawCircle(x, y, radius)
     
-    def DrawText(self, text, x, y):
-        self._update_font_size()
+    def DrawText(self, text, x, y, size_multiplier=1):
+        self._update_font_size(size_multiplier)
         x, y = self.panel.canvas_to_screen_coordinates((x, y))
         return super(SmartDC, self).DrawText(text, x, y)
     

@@ -5,6 +5,8 @@ import petri.tss as tss
 import itertools
 import collections
 import traceback
+
+# TODO: Add ability to count traps and deadlocks separately
   
 PROPERTY_FALSE, PROPERTY_PARTIALLY, PROPERTY_FULLY = 'false', 'partially', 'fully'
     
@@ -201,6 +203,7 @@ class PetriProperties(object):
             for arc in transition.output_arcs:
                 row = places[arc.place]
                 A[row,col] += abs(arc.weight)
+        A = A.astype('int32')
         self.incidence_matrix = A
         
     def _compute_t_invariants(self):
