@@ -42,7 +42,7 @@ import itertools
 import petrigui.add_object_strategy
 import petrigui.petri_objects
 import petrigui.petri_panel
-import net_properties
+import petri.net_properties as net_properties
 import numpy as np
 import stategraph.graph_frame
 import stategraph

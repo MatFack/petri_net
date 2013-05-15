@@ -70,7 +70,7 @@ class GraphAndAnalysisPanel(wx.SplitterWindow):
         analysis_sizer.Add(self.analyze_result, flag=wx.EXPAND|wx.ALL, border=2, proportion=1)
         
         analysis_panel.SetSizerAndFit(analysis_sizer)
-        
+        analysis_panel.SetupScrolling()
         self.tabs.AddPage(analysis_panel, caption='Analysis')
         
                 
@@ -128,7 +128,7 @@ class GraphAndAnalysisPanel(wx.SplitterWindow):
         
         properties_sizer.Add(sizer, flag=wx.EXPAND)
         properties_panel.SetSizerAndFit(properties_sizer)
-        
+        properties_panel.SetupScrolling()
         self.tabs.AddPage(properties_panel, caption='Properties')        
         #
         

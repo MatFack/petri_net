@@ -2,6 +2,7 @@
 #from net_properties import PetriProperties
 import collections
 from pprint import pprint
+from util.serializable import Serializable, RequiredException
 
 DEBUG = False
 
@@ -48,29 +49,35 @@ def greater_than(marking1, marking2):
             
             
 
-class ReachabilityGraph(object):
-    def __init__(self, net, properties=None):
+class ReachabilityGraph(Serializable):
+    
+    explored_to_serialize = True
+    bounded_to_serialize = True
+    dead_states_to_serialize = True
+    place_limits_to_serialize = True
+    max_tokens_number_to_serialize = True
+    names_to_serialize = True
+    
+    def __init__(self, net=None, properties=None):
         self.net = net
-        #if properties is None:
-        #    properties = PetriProperties(self.net)
         self.properties = properties
-        # 
         self.reset()
         self.explored = {}
-        places = {place:i for i,place in enumerate(self.net.get_sorted_places())}
-        self.move_names = [transition.unique_id for transition in self.net.get_sorted_transitions()]
-        self.transition_moves = {}
-        for transition in self.net.get_sorted_transitions():
-            req_tuple = [0]*len(places)
-            move_tuple = [0]*len(places)
-            for arc in transition.input_arcs:
-                n = places[arc.place]
-                req_tuple[n] -= abs(arc.weight)
-                move_tuple[n] -= abs(arc.weight)
-            for arc in transition.output_arcs:
-                n = places[arc.place]
-                move_tuple[n] += abs(arc.weight)
-            self.transition_moves[transition.unique_id] = (tuple(move_tuple), tuple(req_tuple))
+        if net is not None:
+            places = {place:i for i,place in enumerate(self.net.get_sorted_places())}
+            self.move_names = [transition.unique_id for transition in self.net.get_sorted_transitions()]
+            self.transition_moves = {}
+            for transition in self.net.get_sorted_transitions():
+                req_tuple = [0]*len(places)
+                move_tuple = [0]*len(places)
+                for arc in transition.input_arcs:
+                    n = places[arc.place]
+                    req_tuple[n] -= abs(arc.weight)
+                    move_tuple[n] -= abs(arc.weight)
+                for arc in transition.output_arcs:
+                    n = places[arc.place]
+                    move_tuple[n] += abs(arc.weight)
+                self.transition_moves[transition.unique_id] = (tuple(move_tuple), tuple(req_tuple))
 
         
     def reset(self):
@@ -78,6 +85,31 @@ class ReachabilityGraph(object):
         self.dead_states = []
         self.place_limits = []
         self.max_tokens_number = 0
+      
+    def get_backward_names(self):
+        return {name:state for (state, name) in self.names.iteritems()}
+        
+    def names_to_json_struct(self, **kwargs):
+        return self.get_backward_names()
+    
+    def names_from_json_struct(self, names_obj, **kwargs):
+        self.names_deserialized = True
+        return {tuple(state):name for (name, state) in names_obj.iteritems()}
+        
+    def explored_to_json_struct(self, **kwargs):
+        return {self.names[state]:neighbours for (state, neighbours) in self.explored.iteritems()}
+    
+    def explored_from_json_struct(self, explored_obj, **kwargs):
+        if not getattr(self, 'names_deserialized', None):
+            raise RequiredException('names')
+        del self.names_deserialized
+        backward_names = self.get_backward_names() 
+        def tuplify(dct):
+            for name, value in dct.iteritems():
+                dct[name] = tuple(value)
+            return dct
+        tuplify(backward_names)
+        return {backward_names[name]:tuplify(neighbours) for (name, neighbours) in explored_obj.iteritems()}
         
     def explore(self, initial):
         self.reset()
@@ -125,7 +157,6 @@ class ReachabilityGraph(object):
             if not neighbours:
                 self.dead_states.append(state_name)
                 
-
         
 if __name__ == '__main__':
     import json
