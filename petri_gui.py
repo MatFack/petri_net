@@ -46,6 +46,7 @@ import petri.net_properties as net_properties
 import numpy as np
 import stategraph.graph_frame
 import stategraph
+from petri.net_properties import Tristate
 
     
 class SimulateStrategy(Strategy):
@@ -195,6 +196,10 @@ class ValueProperty(LabeledProperty):
         return self.__value_elem
     
     def value_to_string(self, value):
+        if isinstance(value, Tristate):
+            value = value.value
+            if value is None:
+                return 'Unknown'
         return str(value)
     
     def show_to_ui(self, value):
@@ -281,6 +286,9 @@ class MatrixProperty(LabeledProperty):
                 val = matrix[i][j]
                 self.__grid.SetCellValue(i, j, str(val))
                 self.__grid.SetCellBackgroundColour(i, j, wx.WHITE)
+        #self.__grid.SetRowLabelSize(wx.grid.GRID_AUTOSIZE)
+        #self.__grid.SetColLabelSize(wx.grid.GRID_AUTOSIZE)
+
     
 def set_row_color(grid, row, color):
     columns = grid.GetNumberCols()
@@ -336,6 +344,8 @@ class PropertiesTabPanelMixin(object):
         self.update_properties()
         
     def update_properties(self):
+        #print "HERE ME CALLING"
+        #print traceback.print_stack()
         self.properties._reset(self.petri_panel.petri)
         for prop in self.properties_lst:
             prop.update()
@@ -435,7 +445,7 @@ class PropertiesPanel(wx.Panel):
         
         self.tabs.AddPage(stategraph.graph_frame.GraphAndAnalysisPanel(self, self.petri_panel), caption='Reachability graph')
         self.tabs.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CHANGED, self.OnPageChanged)
-        self.update_properties()
+        #self.update_properties()
         
     def OnPageChanged(self, event):
         self.Parent.OnPageChanged(self.tabs.GetSelection())

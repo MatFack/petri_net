@@ -136,13 +136,13 @@ class GraphAndAnalysisPanel(wx.SplitterWindow):
         
         #sizer.Add(self.tabs, flag=wx.EXPAND|wx.ALL, proportion=1)
         self.SplitHorizontally(upper_panel, self.tabs)
+        self.tabs.Bind(wx.aui.EVT_AUINOTEBOOK_PAGE_CLOSE, lambda event:event.Veto()) # Forbid closing
         self.SetMinimumPaneSize(20)
         #self.SetSizer(sizer)
         
         self.petri_panel = petri_panel
         self.setup_bindings()
         self.sash_position = 300
-        
         
     def setup_bindings(self):
         # Buttons bindings
