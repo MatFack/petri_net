@@ -551,11 +551,7 @@ class MainFrame(wx.Frame):
         layoutMenu = wx.Menu()
         self.automatic_layout_item = layoutMenu.Append(wx.NewId(), '&Automatic layout', 'Automatic layout of current net')
         menubar.Append(layoutMenu, '&Layout')
-        
-        analysisMenu = wx.Menu()
-        self.reachability_graph_item = analysisMenu.Append(wx.NewId(), '&Reachability graph', 'Generate reachability graph of current net')
-        menubar.Append(analysisMenu, '&Analysis')
-        
+                
         self.CreateStatusBar()
         self.tab_splitter_position = 700
         self.SetMenuBar(menubar)
@@ -587,8 +583,6 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnChangeSplitterOrientation, change_splitter_orientation)
         # Layout
         self.Bind(wx.EVT_MENU, self.OnKKLayout, self.automatic_layout_item)
-        # Analysis
-        self.Bind(wx.EVT_MENU, self.OnReachabilityGraph, self.reachability_graph_item)
         
         # Bind close
         self.Bind(wx.EVT_CLOSE, self.OnQuit)
@@ -628,11 +622,6 @@ class MainFrame(wx.Frame):
         self.SetSizer(vert_sizer)
         self.Centre() 
         self.Show()
-        
-    def OnReachabilityGraph(self, event):        
-        from stategraph import graph_frame
-        gf = graph_frame.GraphFrame(self, petri_panel=self.petri_panel, title='Reachability graph of %s'%self.petri_panel.GetName())
-        gf.Show()
         
     def OnChangeSplitterOrientation(self, event):
         self.splitter_orientation = wx.SPLIT_HORIZONTAL if self.splitter_orientation == wx.SPLIT_VERTICAL \
