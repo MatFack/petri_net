@@ -30,11 +30,14 @@ class Arc(Serializable):
     def place_to_json_struct(self, **kwargs):
         return self.place.unique_id
     
-    def move_tokens(self):
+    def move_tokens(self, backwards=False):
         abs_weight = abs(self.weight)
-        if self.weight>0:
+        if not self.weight:
+            return
+        weight = self.weight * (-1 if backwards else 1)
+        if weight>0:
             self.place.remove_tokens(abs_weight)
-        elif self.weight<0:
+        elif weight<0:
             self.place.add_tokens(abs_weight)
     
     def place_from_json_struct(self, place_obj, places_dct, **kwargs):
@@ -154,6 +157,13 @@ class Transition(Serializable):
             arc.move_tokens()
         for arc in self.output_arcs:
             arc.move_tokens()
+            
+    def unfire(self):
+        for arc in self.input_arcs:
+            arc.move_tokens(backwards=True)
+        for arc in self.output_arcs:
+            arc.move_tokens(backwards=True)
+        
             
     # Serialization routines
             

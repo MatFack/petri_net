@@ -1,39 +1,13 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-
-# DONE: Commands history
-# DONE: Move command
-# DONE: Create command
-# DONE: Delete command
-# DONE: Copy - puts selected into Buffer - this gonna be tough
-# DONE: Make coordinates in buffer relative,
-# DONE: Cut - creates Delete command, puts selected into Buffer
-# DONE: Paste - creates Create command, puts there objects from Buffer
-# Test test test
-
-# DONE: Tabs
-# TODO: Put properties somewhere, (menu - analysis - tabbed window)
-# DONE: Create menu (save, open, exit, export)
-
-# TODO: Probably need unified frame for displaying graphs and petri nets.
-# TODO: Think about where graph and properties will be
-
-# TODO: split code into modules, but this isn't so urgent
-
-# So, the user looks at the graph and clicks one vertex, and the nclicks another vertex.   
-# First: analysis! Do it somehow, but it has to be
-# Second: shortest path from one set of vertices to another set of vertices
-# Third: ability to select all dead states
-# Probably, ability to select by some criteria
-
-
 import time
 from objects_canvas.strategy import Strategy
 from objects_canvas.move_strategy import MoveAndSelectStrategy
+from commands.simulation_command import SimulationCommand
 import traceback
 import json
-from petri import petri, reachability_graph
+from petri import petri
 import wx
 import wx.aui
 import wx.grid
@@ -43,22 +17,22 @@ import petrigui.add_object_strategy
 import petrigui.petri_objects
 import petrigui.petri_panel
 import petri.net_properties as net_properties
-import numpy as np
 import stategraph.graph_frame
-import stategraph
 from petri.net_properties import Tristate
 
     
 class SimulateStrategy(Strategy):
     def __init__(self, panel):
         super(SimulateStrategy, self).__init__(panel=panel)
-        self.allow_undo_redo = False
+        self.allow_undo_redo = True
         
     def on_left_down(self, event):
         super(SimulateStrategy, self).on_left_down(event)
         obj = self.panel.get_object_at(self.mouse_x, self.mouse_y)
         if isinstance(obj, petri.Transition):
             if obj.is_enabled:
+                fire_command = SimulationCommand(self.panel, obj)
+                self.panel.append_command(fire_command)
                 obj.fire()
                 self.panel.Refresh()
                 self.panel.on_petri_changed()
@@ -426,8 +400,11 @@ class PropertiesPanel(wx.Panel):
         place_limits = MatrixProperty('place_limits', self.properties, label='Token limits',
                                            row_label_getter=empty_lambda, col_label_getter=lambda:['Place', 'Limit'])
 
+        bounded_by_s = ValueProperty('bounded_by_s', self.properties, label='Bounded by S')
+        
+        structural_boundness = ValueProperty('structural_boundedness', self.properties, label='Structural boundness')
 
-        s_inv_properties = [s_invariants_prop, uncovered_by_s, place_limits]
+        s_inv_properties = [s_invariants_prop, uncovered_by_s, place_limits, bounded_by_s, structural_boundness]
         
         self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, s_inv_properties), caption='S invariants')
         # deadlocks and traps
@@ -438,8 +415,12 @@ class PropertiesPanel(wx.Panel):
         traps_prop = TrapsMatrixProperty('traps', self.properties, label='Traps (green are marked traps)',
                                            row_label_getter=ordinal_lambda, col_label_getter=place_lambda,
                                            row_dclick_handler=self.place_selector)
+        
+        liveness = ValueProperty('liveness', self.properties, label='Liveness')
+        
+        structural_liveness = ValueProperty('structural_liveness', self.properties, label='Structural liveness')
 
-        dl_trap_properties = [deadlocks_prop, traps_prop]
+        dl_trap_properties = [deadlocks_prop, traps_prop, liveness, structural_liveness]
         
         self.tabs.AddPage(UsualPropertiesTabPanel(self, self.petri_panel, self.properties, dl_trap_properties), caption='Deadlocks & traps')
         
@@ -513,9 +494,9 @@ class PetriAndProperties(wx.SplitterWindow):
     def update_properties(self):
         self.properties_panel.update_properties()
 
-class Example(wx.Frame):
+class MainFrame(wx.Frame):
     def __init__(self, parent, title):
-        super(Example, self).__init__(parent, title=title, 
+        super(MainFrame, self).__init__(parent, title=title, 
             size=(1400, 800))
         
         self.splitter_orientation = wx.SPLIT_VERTICAL
@@ -879,7 +860,7 @@ class Example(wx.Frame):
 
 
 if __name__ == '__main__':
-    Example(None, 'Petri net editor')
+    MainFrame(None, 'Petri net editor')
     from util import wx_app
     wx_app.app.MainLoop()
     
