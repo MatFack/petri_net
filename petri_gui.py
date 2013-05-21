@@ -1,6 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+import util.py2exe_helper
 import time
 from objects_canvas.strategy import Strategy
 from objects_canvas.move_strategy import MoveAndSelectStrategy
@@ -498,7 +499,9 @@ class MainFrame(wx.Frame):
     def __init__(self, parent, title):
         super(MainFrame, self).__init__(parent, title=title, 
             size=(1400, 800))
-        
+        ib=wx.IconBundle()
+        ib.AddIconFromFile("assets/icon.ico",wx.BITMAP_TYPE_ANY)
+        self.SetIcons(ib)
         self.splitter_orientation = wx.SPLIT_VERTICAL
         self.tab_page_number = 0
         self.clip_buffer = Buffer()
