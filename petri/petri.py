@@ -447,7 +447,7 @@ if __name__=='__main__':
 
     net1 = PetriNet.from_string("""
     #p1::1 p2::50
-    p2 -> t1 -> p2 p1 p4
+    p2 -> t1 -> p2::8 p1 p4
     p3 -> t2 -> p5
     """)
     

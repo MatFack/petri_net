@@ -50,7 +50,7 @@ if __name__=='__main__':
                   default=JSON_FORMAT, choices=[TEXT_FORMAT, JSON_FORMAT],
                   help="input file format")
     
-    all_properties = ','.join(p._fields)
+    all_properties = ','.join(field for field in p._fields if not field.endswith('_error'))
     parser.add_argument("-p", "--properties", dest="properties",
               default=all_properties,
               help="properties to be computed")
