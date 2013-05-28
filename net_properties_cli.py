@@ -57,7 +57,7 @@ if __name__=='__main__':
     args = parser.parse_args()
     from pprint import pprint
     whole_result = {}
-    encoder = NumpyAwareJSONEncoder(indent=2, encoding='utf-8')
+    encoder = NumpyAwareJSONEncoder(encoding='utf-8')
     errors = total = problems =0
     for filename in get_filenames(args.input_file):
         total += 1
@@ -77,7 +77,6 @@ if __name__=='__main__':
             dct = dict(props)
             whole_result[filename] = dct
         except Exception, e:
-            print e
             whole_result[filename] = traceback.format_exc()
             errors+=1
     if args.out_filename: 
